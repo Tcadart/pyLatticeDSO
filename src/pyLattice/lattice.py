@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 
 timing = Timing()
 
-
 class Lattice(object):
     """
     Generate lattice structures with a lot of different parameters

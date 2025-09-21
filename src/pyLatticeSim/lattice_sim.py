@@ -880,7 +880,7 @@ class LatticeSim(Lattice):
 
         print(Fore.GREEN + "Conjugate Gradient started."+ Style.RESET_ALL)
 
-        tol = 1e-6
+        tol = 1e-12
         mintol = 1e-12
         restart_every = 500000
         alpha_max = 100

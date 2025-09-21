@@ -7,10 +7,10 @@
       },
     "number_of_cells": {
       "x": 10,
-      "y": 3,
-      "z": 3
+      "y": 5,
+      "z": 5
     },
-    "radii": [0.1, 0.1, 0.1],
+    "radii": [0.085, 0.053, 0.066],
     "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
   },
     "simulation_parameters": {
@@ -21,7 +21,8 @@
         "enable_preconditioner": true,
         "max_iterations": 1000,
         "schur_complement_computation": {
-          "type": "FE2"
+          "type": "nearest_neighbor",
+          "precision_greedy": 1e-6
         }
       }
   },
