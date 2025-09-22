@@ -2,8 +2,7 @@ from math import sqrt
 from typing import TYPE_CHECKING
 import numpy as np
 from colorama import Fore, Style
-from scipy.interpolate import RBFInterpolator
-from scipy.sparse import coo_matrix, lil_matrix
+from scipy.sparse import coo_matrix
 from scipy.sparse.linalg import LinearOperator, splu, spilu
 from sklearn.neighbors import NearestNeighbors
 
@@ -693,10 +692,7 @@ class LatticeSim(Lattice):
         elif self.type_schur_complement_computation == "RBF":
             if self.radial_basis_function is None:
                 self._define_radial_basis_functions()
-            alphas = self.radial_basis_function(np.array(geometric_params).reshape(1, -1)).squeeze()
-            alphas_2 = self.radial_basis_function_new.evaluate(np.array(geometric_params).reshape(1, -1)).squeeze()
-            print("Relative error between RBF (old vs new): ",
-                    np.linalg.norm(alphas - alphas_2) / np.linalg.norm(alphas))
+            alphas = self.radial_basis_function.evaluate(np.array(geometric_params).reshape(1, -1)).squeeze()
         else:
             raise NotImplementedError("Not implemented schur complement computation method.")
 
@@ -754,7 +750,7 @@ class LatticeSim(Lattice):
         radii_params : list[float]
             Current radii for this cell's beam types.
         """
-        grad_alpha = self.radial_basis_function_new.gradient(radii_params)  # (d, m)
+        grad_alpha = self.radial_basis_function.gradient(radii_params)  # (d, m)
 
         B = np.asarray(self.reduce_basis_dict["basis_reduced_ortho"], float)  # (nS, m)
         nS = B.shape[0]
@@ -853,10 +849,7 @@ class LatticeSim(Lattice):
     def _define_radial_basis_functions(self):
         mu_train = np.array(self.reduce_basis_dict["list_elements"])  # shape (N, d)
         alpha_train = np.array(self.alpha_coefficients_greedy)  # shape (N, m)
-        self.radial_basis_function = RBFInterpolator(mu_train, alpha_train, kernel='thin_plate_spline')
-        self.radial_basis_function_new = ThinPlateSplineRBF(mu_train, alpha_train)
-        test = self.radial_basis_function(mu_train[:5]) - self.radial_basis_function_new.evaluate(mu_train[:5])
-        print(np.linalg.norm(test))
+        self.radial_basis_function = ThinPlateSplineRBF(mu_train, alpha_train)
 
 
     def define_parameters(self, enable_precondioner: bool = True, numberIterationMax: int = 1000):
