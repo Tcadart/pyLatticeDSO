@@ -10,7 +10,8 @@ from pyLatticeSim.lattice_sim import LatticeSim
 from pyLatticeSim.utils_simulation import solve_FEM_FenicsX
 
 path = "optimization/"
-name_file = "optimization_DDM_surrogate"
+# name_file = "optimization_DDM_surrogate"
+name_file = "Cantilever_L_beam"
 
 
 lattice_object = LatticeOpti(path + name_file, verbose=1, convergence_plotting = True)

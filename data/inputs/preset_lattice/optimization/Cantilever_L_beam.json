@@ -6,43 +6,59 @@
         "z": 1
       },
     "number_of_cells": {
-      "x": 5,
+      "x": 6,
       "y": 1,
-      "z": 1
+      "z": 6
     },
     "radii": [0.1, 0.1, 0.1],
     "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
+  },
+  "suplementary": {
+    "erased_blocks": {
+      "block_0": {
+        "start_point": {
+          "x": 3.0,
+          "y": 0.0,
+          "z": 3.0
+        },
+        "dimensions_block": {
+          "x": 3.0,
+          "y": 1.0,
+          "z": 3.0
+        }
+      }
+    }
   },
     "simulation_parameters": {
       "enable" : true,
       "material": "VeroClear",
       "periodicity": true,
       "DDM": {
-          "enable_preconditioner": true,
-          "max_iterations": 10,
-          "schur_complement_computation": {
-            "type": "RBF",
-            "precision_greedy": 1e-6
+        "enable_preconditioner": true,
+        "max_iterations": 100,
+        "schur_complement_computation": {
+          "type": "RBF",
+          "precision_greedy": 1e-6
         }
       }
   },
   "boundary_conditions": {
+    "Force": {
+      "Load": {
+        "Surface": ["Xmax", "Zmin"],
+        "DOF": ["Z"],
+        "Value": [-0.1]
+      }
+    },
     "Displacement": {
-      "Fixed" : {
-        "Surface": ["Xmin"],
+      "Encastre": {
+        "Surface": ["Zmax"],
         "DOF": ["X", "Y", "Z", "RX", "RY", "RZ"],
         "Value": [0, 0, 0, 0, 0, 0]
       }
-    },
-    "Force": {
-      "Load" : {
-        "Surface": ["Xmax"],
-        "DOF": ["Z"],
-        "Value": [-0.01]
-      }
     }
   },
-    "optimization_informations": {
+  "optimization_informations": {
       "objective_function": "min",
       "objective_type": "compliance",
       "max_iterations": 50,
@@ -52,7 +68,7 @@
       },
       "constraints": {
         "relative_density": {
-          "value": 0.1
+          "value": 0.15
         }
       },
       "enable_parameter_normalization": true,

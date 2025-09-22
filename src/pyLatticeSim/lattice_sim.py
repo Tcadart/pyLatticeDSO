@@ -12,6 +12,7 @@ from pyLattice.cell import Cell
 from pyLattice.lattice import Lattice
 from pyLattice.utils import open_lattice_parameters
 from pyLatticeSim.greedy_algorithm import load_reduced_basis
+from pyLatticeSim.utils_rbf import ThinPlateSplineRBF
 from pyLatticeSim.utils_schur import get_schur_complement
 from pyLatticeSim.conjugate_gradient_solver import conjugate_gradient_solver
 from pyLatticeSim.utils_simulation import solve_FEM_cell
@@ -648,8 +649,14 @@ class LatticeSim(Lattice):
 
                 dS_list = None
                 if self.enable_gradient_computing:
-                    # Derivatives w.r.t. radii (finite-difference, central)
-                    dS_list = self._compute_schur_gradients(cell, list(radius_key))
+                    if self.type_schur_complement_computation is not "RBF":
+                        # Derivatives w.r.t. radii (finite-difference, central)
+                        dS_list = self._compute_schur_gradients(cell, list(radius_key))
+                    elif self.type_schur_complement_computation is "RBF":
+                        # Derivatives w.r.t. radii (via RBF gradients)
+                        dS_list = self._compute_schur_gradients_RBF(list(radius_key))
+                    else:
+                        raise NotImplementedError("Not implemented schur complement gradient computation method.")
 
                 schur_cache[geom_key][radius_key] = {"S": S, "dS": dS_list}
                 if self._verbose > 1:
@@ -687,6 +694,9 @@ class LatticeSim(Lattice):
             if self.radial_basis_function is None:
                 self._define_radial_basis_functions()
             alphas = self.radial_basis_function(np.array(geometric_params).reshape(1, -1)).squeeze()
+            alphas_2 = self.radial_basis_function_new.evaluate(np.array(geometric_params).reshape(1, -1)).squeeze()
+            print("Relative error between RBF (old vs new): ",
+                    np.linalg.norm(alphas - alphas_2) / np.linalg.norm(alphas))
         else:
             raise NotImplementedError("Not implemented schur complement computation method.")
 
@@ -698,7 +708,6 @@ class LatticeSim(Lattice):
             (self.shape_schur_complement, self.shape_schur_complement), order='F')
 
         return schur_complement_approx_reshape
-
 
     def _compute_schur_gradients(self, cell: "Cell", radii_params: list[float]) -> list[np.ndarray]:
         """
@@ -731,9 +740,40 @@ class LatticeSim(Lattice):
             S_m = self._schur_for_params(cell, rm)
 
             dS = (S_p - S_m) / (rp[j] - rm[j])
+
             grads.append(dS)
 
         return grads
+
+    def _compute_schur_gradients_RBF(self, radii_params: list[float]) -> list[np.ndarray]:
+        """
+        Compute the gradients of the Schur complement efficiently using RBF interpolation class.
+
+        Parameters
+        ----------
+        radii_params : list[float]
+            Current radii for this cell's beam types.
+        """
+        grad_alpha = self.radial_basis_function_new.gradient(radii_params)  # (d, m)
+
+        B = np.asarray(self.reduce_basis_dict["basis_reduced_ortho"], float)  # (nS, m)
+        nS = B.shape[0]
+        # taille carrée de S
+        shapeS = self.shape_schur_complement
+        if shapeS is None:
+            shapeS = int(np.sqrt(nS))
+            self.shape_schur_complement = shapeS
+
+        grads_rbf = []
+        for j in range(len(radii_params)):
+            dalpha = np.asarray(grad_alpha[j], float)  # (m,)
+            dS_vec = B @ dalpha  # (nS,)
+            dS_mat = dS_vec.reshape((shapeS, shapeS), order='F')  # même ordre que pour S
+            grads_rbf.append(dS_mat)
+
+        return grads_rbf
+
+
 
     def _schur_for_params(self, cell: "Cell", radii_params: list[float]) -> np.ndarray:
         """
@@ -814,6 +854,9 @@ class LatticeSim(Lattice):
         mu_train = np.array(self.reduce_basis_dict["list_elements"])  # shape (N, d)
         alpha_train = np.array(self.alpha_coefficients_greedy)  # shape (N, m)
         self.radial_basis_function = RBFInterpolator(mu_train, alpha_train, kernel='thin_plate_spline')
+        self.radial_basis_function_new = ThinPlateSplineRBF(mu_train, alpha_train)
+        test = self.radial_basis_function(mu_train[:5]) - self.radial_basis_function_new.evaluate(mu_train[:5])
+        print(np.linalg.norm(test))
 
 
     def define_parameters(self, enable_precondioner: bool = True, numberIterationMax: int = 1000):
@@ -1182,3 +1225,41 @@ class LatticeSim(Lattice):
         for cell in self.cells:
             cell.reset_beam_modification()
         print(Fore.GREEN + "Penalized beams have been reset." + Style.RESET_ALL)
+
+    def get_global_force_displacement_curve(self, dof: int = 2) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Aggregate global force (sum of reactions) vs imposed displacement for comparison with experiment.
+
+        Parameters
+        ----------
+        dof : int
+            Degree of freedom to extract (default=2 for Z direction).
+
+        Returns
+        -------
+        disp : np.ndarray
+            Imposed displacement values (at the loading boundary nodes).
+        force : np.ndarray
+            Total reaction force corresponding to that displacement.
+        """
+        disp_list = []
+        force_list = []
+
+        seen = set()
+        for cell in self.cells:
+            for node in cell.points_cell:
+                if node.index_boundary is None or node in seen:
+                    continue
+
+                # Only keep nodes with applied BC
+                if any(node.applied_force) or any(node.fixed_DOF):
+                    # Get imposed displacement in DOF
+                    disp_list.append(node.displacement_vector[dof])
+                    # Sum reaction force on that DOF
+                    force_list.append(node.reaction_force_vector[dof])
+                seen.add(node)
+
+        disp = np.asarray(disp_list, dtype=float)
+        force = np.sum(force_list, axis=0)  # total force on DOF
+        return disp, force
+

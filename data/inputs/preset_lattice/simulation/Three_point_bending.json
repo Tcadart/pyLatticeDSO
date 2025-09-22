@@ -1,16 +1,16 @@
 {
   "geometry": {
     "cell_size": {
-        "x": 1,
-        "y": 1,
-        "z": 1
+        "x": 10,
+        "y": 10,
+        "z": 10
       },
     "number_of_cells": {
       "x": 10,
       "y": 5,
       "z": 5
     },
-    "radii": [0.085, 0.053, 0.066],
+    "radii": [0.5, 0.5, 0.5],
     "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
   },
     "simulation_parameters": {

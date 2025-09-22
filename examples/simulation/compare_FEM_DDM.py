@@ -20,21 +20,30 @@ print("Lattice generation time --- %s seconds ---" % (time.time() - start_time85
 sol_FEM = solve_FEM_FenicsX(lattice_Sim_object)[0]
 print("FEM simulation time --- %s seconds ---" % (time.time() - start_time85))
 
+# U, RF = lattice_Sim_object.get_boundary_conditions_displacements_and_reactions()
+# for i, val in enumerate(U):
+#     print(f"Displacement at DOF {i}: {val}")
+#     print(f"Reaction force at DOF {i}: {RF[i]}")
+
+disp, force = lattice_Sim_object.get_global_force_displacement_curve(dof=2)  # Z direction
+print("Force:", force)
+
+
 # Visualization with matplotlib
 # vizualizer = LatticePlotting()
 # vizualizer.visualize_lattice(lattice_Sim_object, beam_color_type="radii",
 #                              enable_boundary_conditions=True,
 #                              deformedForm=True)
 
-start_time85 = time.time()
-lattice_object = LatticeSim(path + name_file, enable_domain_decomposition_solver = True, verbose=1)
-print("Lattice generation time --- %s seconds ---" % (time.time() - start_time85))
-
-sol_DDM = lattice_object.solve_DDM()[0]
-print("DDM simulation time --- %s seconds ---" % (time.time() - start_time85))
-
-relative_error = np.linalg.norm(sol_FEM - sol_DDM) / np.linalg.norm(sol_FEM)
-print("Relative error between FEM and DDM", relative_error)
+# start_time85 = time.time()
+# lattice_object = LatticeSim(path + name_file, enable_domain_decomposition_solver = True, verbose=1)
+# print("Lattice generation time --- %s seconds ---" % (time.time() - start_time85))
+#
+# sol_DDM = lattice_object.solve_DDM()[0]
+# print("DDM simulation time --- %s seconds ---" % (time.time() - start_time85))
+#
+# relative_error = np.linalg.norm(sol_FEM - sol_DDM) / np.linalg.norm(sol_FEM)
+# print("Relative error between FEM and DDM", relative_error)
 
 # vizualizer = LatticePlotting()
 # vizualizer.visualize_lattice(lattice_object, beam_color_type="radii",

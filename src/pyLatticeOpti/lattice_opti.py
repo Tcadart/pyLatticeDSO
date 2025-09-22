@@ -46,8 +46,8 @@ class LatticeOpti(LatticeSim):
         self.bounds = None
         self.constraints = []
         self.iteration = 0
-        self.optim_max_iteration = 1000
-        self.optim_ftol = 1e-5
+        self.optim_max_iteration = 10
+        self.optim_ftol = 1e-3
         self.optim_disp = True
         self.optim_eps = 1e-3
         self.objectif_data = None
@@ -847,9 +847,13 @@ class LatticeOpti(LatticeSim):
         else:
             raise ValueError("Invalid optimization parameters type.")
 
-    def gradient(self, r):
+    def gradient(self, r: list[float]) -> np.ndarray:
         """
         Gradient function for the optimization
+
+        Parameters:
+        r: list of float
+            List of optimization parameters
         """
         if self._verbose >= 1:
             print(Fore.BLUE + "Gradient function"+ Fore.RESET)
