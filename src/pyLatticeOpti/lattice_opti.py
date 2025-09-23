@@ -216,15 +216,16 @@ class LatticeOpti(LatticeSim):
             borneMax = self.max_radius
         self.bounds = Bounds(lb=[borneMin] * self.number_parameters, ub=[borneMax] * self.number_parameters)
 
+        initial_value = mean(self.normalize_optimization_parameters(self.radii))
         if self.optimization_parameters["type"] == "unit_cell":
-            self.initial_parameters = [1] * self.number_parameters
+            self.initial_parameters = [initial_value] * self.number_parameters
         elif self.optimization_parameters["type"] == "linear":
             if self.radius_field is None:
                 self._build_radius_field()
             self.initial_parameters = [0.0] * (self.number_parameters - 1)
             self.initial_parameters.append(1)
         elif self.optimization_parameters["type"] == "constant":
-            self.initial_parameters = [0.5] * self.number_parameters
+            self.initial_parameters = [initial_value] * self.number_parameters
         else:
             raise ValueError("Invalid optimization parameters type.")
 
@@ -406,18 +407,19 @@ class LatticeOpti(LatticeSim):
             scale = (self.max_radius - self.min_radius) if self.enable_normalization else 1.0
 
             for cell in self.cells:
-                g_cell = np.asarray(
-                    cell.get_relative_density_gradient_kriging(
+                g_cell_exact = np.asarray(
+                    cell.get_relative_density_gradient_kriging_exact(
                         self.kriging_model_relative_density,
                         self.kriging_model_geometries_types
                     ),
                     dtype=float
                 )
-                if g_cell.size != n_geom:
+
+                if g_cell_exact.size != n_geom:
                     raise ValueError(f"Gradient size mismatch: expected {n_geom}, got {g_cell.size}")
 
                 start = cell.index * n_geom
-                grad[start:start + n_geom] = (g_cell * scale) / n_cells
+                grad[start:start + n_geom] = (g_cell_exact * scale) / n_cells
 
             return grad
         elif self.optimization_parameters["type"] == "linear":
@@ -753,6 +755,30 @@ class LatticeOpti(LatticeSim):
             denorm_val = self._clamp_radius(val * (self.max_radius - self.min_radius) + self.min_radius)
             r.append(denorm_val)
         return r
+
+    def normalize_optimization_parameters(self, r: list[float]) -> list[float]:
+        """
+        Normalize optimization parameters
+
+        Parameters:
+        -----------
+        r: list of float
+            List of denormalized optimization parameters
+
+        Returns:
+        --------
+        r_norm: list of float
+            List of normalized optimization parameters
+        """
+        if not self.enable_normalization:
+            return r
+        r_norm = []
+        for val in r:
+            if val < self.min_radius or val > self.max_radius:
+                raise ValueError("Optimization parameter out of bounds.")
+            norm_val = (val - self.min_radius) / (self.max_radius - self.min_radius)
+            r_norm.append(norm_val)
+        return r_norm
 
     def calculate_objective(self) -> float:
         """

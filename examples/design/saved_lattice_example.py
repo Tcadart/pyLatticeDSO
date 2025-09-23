@@ -5,7 +5,6 @@ from pyLattice.lattice import Lattice
 from pyLattice.plotting_lattice import LatticePlotting
 
 name_lattice = "Kelvin_helmet"
-# TODO ajouter le créateur de ce fichier
 
 lattice = Lattice.open_pickle_lattice(name_lattice)
 

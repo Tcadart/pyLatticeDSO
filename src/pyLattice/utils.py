@@ -153,8 +153,8 @@ def save_lattice_object(lattice, file_name: str = "LatticeObject") -> None:
     file_name: str
         Name of the file to save (with or without the '.pkl' extension).
     """
-    project_root = Path(__file__).resolve().parent.parent
-    path = project_root / "saved_lattice_file" / file_name
+    project_root = Path(__file__).resolve().parents[2]
+    path = project_root / "data" / "outputs" / "saved_lattice_file" / file_name
     if path.suffix != ".pkl":
         path = path.with_suffix('.pkl')
 
@@ -404,6 +404,8 @@ def save_JSON_to_Grasshopper(lattice, nameLattice: str = "LatticeObject", multip
     multipleParts: int, optional (default: 1)
         Number of parts to save.
     """
+    lattice.reset_penalized_beams()
+
     folder_path = Path(__file__).resolve().parents[2] / "data" / "outputs" / "saved_lattice_file"
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)

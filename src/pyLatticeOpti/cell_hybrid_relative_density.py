@@ -422,6 +422,65 @@ def train_kriging_model(radii, volumes, save_path="saved_lattice_file/RelativeDe
 
     return gpr
 
+# --- add this helper (module-level or as a @staticmethod) ---
+def _gp_mean_gradient_rbf_pipeline(pipe, x_row: np.ndarray) -> np.ndarray:
+    """
+    Exact gradient of the GPR predictive mean wrt inputs for a Pipeline(StandardScaler -> GPR)
+    with kernel ConstantKernel * RBF (ARD or isotropic). Returns dmu/dx in ORIGINAL (unscaled) space.
+    """
+    import numpy as np
+    from sklearn.gaussian_process.kernels import RBF, ConstantKernel
+    from sklearn.gaussian_process.kernels import Product
+
+    scaler = pipe.named_steps["x_scaler"]
+    gpr = pipe.named_steps["gpr"]
+
+    # x in original space -> scaled space
+    x_row = np.asarray(x_row, dtype=float).reshape(1, -1)
+    x_s = scaler.transform(x_row).reshape(-1)  # (d,)
+
+    Xs = gpr.X_train_                     # (n_train, d) in scaled space
+    alpha = gpr.alpha_.reshape(-1)        # (n_train,)
+
+    # Extract Constant * RBF
+    k = gpr.kernel_
+    if isinstance(k, Product):
+        k1, k2 = k.k1, k.k2
+        if isinstance(k1, ConstantKernel) and isinstance(k2, RBF):
+            const_val = float(k1.constant_value)
+            rbf = k2
+        elif isinstance(k2, ConstantKernel) and isinstance(k1, RBF):
+            const_val = float(k2.constant_value)
+            rbf = k1
+        else:
+            raise ValueError("Kernel must be ConstantKernel * RBF for exact gradient.")
+    elif isinstance(k, RBF):
+        const_val = 1.0
+        rbf = k
+    else:
+        raise ValueError("Kernel must be (ConstantKernel * RBF) or RBF for exact gradient.")
+
+    length_scale = np.asarray(rbf.length_scale, dtype=float)
+    if length_scale.ndim == 0:
+        length_scale = np.full(Xs.shape[1], float(length_scale))
+    ell2 = length_scale**2  # (d,)
+
+    # k(x, Xi) in scaled space
+    diff = Xs - x_s  # (n_train, d)
+    sq_maha = np.sum((diff**2) / ell2, axis=1)  # (n_train,)
+    k_vec = const_val * np.exp(-0.5 * sq_maha)  # (n_train,)
+
+    # ∂k/∂x_j = k * (Xi_j - x_j) / ell_j^2
+    # ∂μ/∂x_j = sum_i alpha_i * ∂k_i/∂x_j
+    num = (diff / ell2) * k_vec[:, None]        # (n_train, d)
+    dmu_dx_scaled = num.T @ alpha               # (d,)
+
+    # Chain rule back to original space: x_s = (x - mean)/scale
+    scale = scaler.scale_.astype(float)         # (d,)
+    dmu_dx = dmu_dx_scaled / scale              # (d,)
+    return dmu_dx
+
+
 radii, volumes = load_and_filter_data(csv_file)
 
 # === Exécution de la suppression des points aberrants ===

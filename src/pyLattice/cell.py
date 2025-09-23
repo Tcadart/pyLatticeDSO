@@ -9,6 +9,7 @@ from collections import OrderedDict
 import numpy as np
 from colorama import Fore, Style
 
+from pyLatticeOpti.surrogate_model_relative_densities import _gp_mean_gradient_rbf_pipeline
 from .beam import *
 from .point import Point
 from .geometries.geometries_utils import *
@@ -776,19 +777,9 @@ class Cell(object):
 
     def get_relative_density_gradient_kriging(self, model, geometries_types) -> np.ndarray:
         """
-        Retourne le gradient de la fonction volume par rapport aux rayons (dérivée partielle).
-
-        Paramètres :
-        ------------
-        gpr : GaussianProcessRegressor
-            Modèle de Kriging entraîné.
-        radii : np.ndarray
-            Tableau de taille (n_samples, 3) contenant les rayons.
-
-        Retourne :
-        ----------
-        gradients : np.ndarray
-            Gradient du volume par rapport aux rayons (shape: (n_samples, 3)).
+        Finite difference gradient of the relative density (predictive mean) w.r.t. the radii using the trained
+        Pipeline(StandardScaler -> GaussianProcessRegressor) with Constant*RBF kernel.
+        Returns an array of size len(geometries_types) where entries for geometries not present in the cell are 0.
         """
         epsilon = 1e-3
         grad = np.zeros(len(self.radii))
@@ -804,6 +795,39 @@ class Cell(object):
             radii[geom_index] = rad
             grad[idx] = (model.predict([perturbed_radii]) - model.predict([radii])) / epsilon
         return grad
+
+    def get_relative_density_gradient_kriging_exact(self, model, geometries_types) -> np.ndarray:
+        """
+        Exact gradient of the relative density (predictive mean) w.r.t. the radii using the trained
+        Pipeline(StandardScaler -> GaussianProcessRegressor) with Constant*RBF kernel.
+
+        Returns an array of size len(geometries_types) where entries for geometries not present in the cell are 0.
+
+        Parameters:
+        -----------
+        model: Pipeline
+            Trained kriging model
+        geometries_types: list
+            List of geometry types in the trained kriging model
+        """
+        # Build full input vector (one radius per geometry in 'geometries_types')
+        x = np.zeros(len(geometries_types), dtype=float)
+        for idx, rad in enumerate(self.radii):
+            g = self.geom_types[idx]
+            if g not in geometries_types:
+                print("geometry types in cell", self.geom_types, " not in the trained kriging model", geometries_types)
+                raise ValueError("Incompatible geometry types between the cell and the kriging model.")
+            x[geometries_types.index(g)] = float(rad)
+
+        # Exact gradient in original feature space
+        grad_full = _gp_mean_gradient_rbf_pipeline(model, x)  # shape (len(geometries_types),)
+
+        # Reorder to match the cell's local parameter order (same as self.radii / self.geom_types)
+        grad_local = np.zeros(len(self.radii), dtype=float)
+        for idx, g in enumerate(self.geom_types):
+            grad_local[idx] = grad_full[geometries_types.index(g)]
+
+        return grad_local
 
     def get_number_nodes_at_boundary(self):
         """

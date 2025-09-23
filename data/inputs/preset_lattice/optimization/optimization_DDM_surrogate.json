@@ -10,7 +10,7 @@
       "y": 1,
       "z": 1
     },
-    "radii": [0.1, 0.1, 0.1],
+    "radii": [0.05, 0.05, 0.05],
     "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
   },
     "simulation_parameters": {
@@ -52,7 +52,7 @@
       },
       "constraints": {
         "relative_density": {
-          "value": 0.1
+          "value": 0.2
         }
       },
       "enable_parameter_normalization": true,

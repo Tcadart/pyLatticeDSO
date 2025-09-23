@@ -648,10 +648,10 @@ class LatticeSim(Lattice):
 
                 dS_list = None
                 if self.enable_gradient_computing:
-                    if self.type_schur_complement_computation is not "RBF":
+                    if self.type_schur_complement_computation != "RBF":
                         # Derivatives w.r.t. radii (finite-difference, central)
                         dS_list = self._compute_schur_gradients(cell, list(radius_key))
-                    elif self.type_schur_complement_computation is "RBF":
+                    elif self.type_schur_complement_computation == "RBF":
                         # Derivatives w.r.t. radii (via RBF gradients)
                         dS_list = self._compute_schur_gradients_RBF(list(radius_key))
                     else:
@@ -1217,7 +1217,7 @@ class LatticeSim(Lattice):
         """
         for cell in self.cells:
             cell.reset_beam_modification()
-        print(Fore.GREEN + "Penalized beams have been reset." + Style.RESET_ALL)
+        print(Fore.LIGHTYELLOW_EX + "Penalized beams have been reset." + Style.RESET_ALL)
 
     def get_global_force_displacement_curve(self, dof: int = 2) -> tuple[np.ndarray, np.ndarray]:
         """
