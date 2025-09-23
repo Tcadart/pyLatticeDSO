@@ -159,10 +159,16 @@ def save_lattice_object(lattice, file_name: str = "LatticeObject") -> None:
     Important: converts internal sets (beams/nodes and per-cell containers) to lists
     before pickling to avoid hashing during unpickling. A marker `_pickle_format`
     is stored so the loader can restore sets later.
-    """
-    import pickle
-    from pathlib import Path
+    Note: this function does NOT save the full state of subclasses, only the base
+    `Lattice` attributes. (TO UPDATE if needed)
 
+    Parameters:
+    -----------
+    lattice: Lattice
+        Lattice object to save.
+    file_name: str
+        Name of the pickle file to save.
+    """
     def _find_base_lattice_cls(obj):
         for cls in obj.__class__.__mro__:
             if cls.__name__ == "Lattice" and getattr(cls, "__module__", "").endswith("pyLattice.lattice"):
@@ -197,7 +203,6 @@ def save_lattice_object(lattice, file_name: str = "LatticeObject") -> None:
             base = obj
 
         # --- make pickle-safe: convert sets to lists everywhere ---
-        # top-level
         if isinstance(getattr(base, "beams", None), set):
             base.beams = list(base.beams)
         if isinstance(getattr(base, "nodes", None), set):
@@ -470,8 +475,6 @@ def save_JSON_to_Grasshopper(lattice, nameLattice: str = "LatticeObject", multip
     multipleParts: int, optional (default: 1)
         Number of parts to save.
     """
-    lattice.reset_penalized_beams()
-
     folder_path = Path(__file__).resolve().parents[2] / "data" / "outputs" / "saved_lattice_file"
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
@@ -535,3 +538,15 @@ def plot_coordinate_system(ax):
     ax.text(origin[0] + axis_length, origin[1], origin[2], "X", color='r')
     ax.text(origin[0], origin[1] + axis_length, origin[2], "Y", color='g')
     ax.text(origin[0], origin[1], origin[2] + axis_length, "Z", color='b')
+
+def _discard(container, item):
+    if container is None:
+        return
+    if isinstance(container, set):
+        container.discard(item)
+    else:
+        try:
+            container.remove(item)
+        except ValueError:
+            pass
+

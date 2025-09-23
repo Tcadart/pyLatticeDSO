@@ -53,6 +53,7 @@ class LatticePlotting:
                              voxelViz: bool = False, deformedForm: bool = False, file_save_path: str = None,
                              plotCellIndex: bool = False, plotNodeIndex: bool = False, explode_voxel: float = 0.0,
                              plotting: bool = True, nbRadiusBins: int = 5,
+                             domain_decomposition_simulation_plotting: bool = False,
                              enable_system_coordinates: bool = True, enable_boundary_conditions: bool = False,
                              camera_position: Tuple[float, float] = None, use_radius_grad_color: bool = False) -> None:
         """
@@ -104,7 +105,7 @@ class LatticePlotting:
 
         domain_decomposition_plotting = False
         try:
-            if lattice_object.domain_decomposition_solver:
+            if domain_decomposition_simulation_plotting and lattice_object.domain_decomposition_solver:
                 domain_decomposition_plotting = True
         except AttributeError:
             pass

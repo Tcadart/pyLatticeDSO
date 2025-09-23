@@ -435,6 +435,16 @@ class Cell(object):
             for b in beam_to_delete:
                 self.beams_cell.discard(b)
 
+    def remove_point(self, point_to_delete: Union["Point", Iterable["Point"]]) -> None:
+        """
+        Removing point from cell
+        """
+        if isinstance(point_to_delete, Point):
+            self.points_cell.discard(point_to_delete)
+        else:
+            for p in point_to_delete:
+                self.points_cell.discard(p)
+
     def add_beam(self, beam_to_add: Union["Beam", Iterable["Beam"]]) -> None:
         """
         Adding beam to cell
@@ -734,15 +744,6 @@ class Cell(object):
 
         self.radii = new_radius
 
-    def reset_beam_modification(self) -> None:
-        """
-        Reset beam modification in the cell
-        """
-        for beam in self.beams_cell:
-            if beam.beam_mod:
-                beam.radius = self.radii[beam.type_beam]
-
-
 
     def get_relative_density_kriging(self, kriging_model) -> float:
         """
@@ -946,4 +947,15 @@ class Cell(object):
 
         return R
 
+    def refresh_from_global(self, lattice: "Lattice") -> None:
+        """
+        Rebuild self.beams_cell and self.points_cell from the current lattice state.
+        Keeps only beams that still declare this cell as a belonging, and derives points from those beams.
+        """
+        live_beams = {
+            b for b in lattice.beams
+            if getattr(b, "cell_belongings", None) and self in b.cell_belongings
+        }
+        self.beams_cell = live_beams
+        self.points_cell = {p for b in live_beams for p in (b.point1, b.point2)}
 

@@ -7,6 +7,8 @@ from typing import List, Tuple, Optional
 
 from typing import List, Tuple, Optional, TYPE_CHECKING
 
+from .utils import _discard
+
 if TYPE_CHECKING:
     from .cell import Cell
 
@@ -51,7 +53,25 @@ class Point:
         self.global_free_DOF_index: List[Optional[float]] = [None] * 6  # Global free DOF index.
         self.node_mod: bool = False
         self.magnification_factor: float = 5.0  # Magnification factor for visualization.
-        self.connected_beams: List = []  # List of beams connected to the point.
+        self.connected_beams: set = set()  # List of beams connected to the point.
+
+    def destroy(self) -> None:
+        """
+        Remove all references to this point from connected beams and cells.
+        """
+        self.connected_beams.clear()
+
+        for cell in list(getattr(self, "cell_belongings", [])):
+            _discard(getattr(cell, "points_cell", None), self)
+        self.cell_belongings.clear()
+
+        # Clear other attributes
+        self.index = None
+        self.index_boundary = None
+        self.tag = None
+        self.cell_local_tag = {}
+        self.global_free_DOF_index = [None] * 6
+
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Point) and self.x == other.x and self.y == other.y and self.z == other.z

@@ -10,7 +10,8 @@ if TYPE_CHECKING:
     from .cell import Cell
 
 from .point import Point
-from .utils import function_penalization_Lzone
+from .utils import function_penalization_Lzone, _discard
+
 
 class Beam(object):
     """
@@ -18,7 +19,7 @@ class Beam(object):
     """
 
     def __init__(self, point1: 'Point', point2: 'Point', radius: float, material: int, type_beam: int,
-                 cell_belongings: 'Cell') -> None:
+                 cell_belongings: ['Cell' or list['Cell']]) -> None:
         """
         Initialize a Beam object representing a beam element.
 
@@ -36,24 +37,50 @@ class Beam(object):
         self.radius: float = radius
         self.material: int = material
         self.type_beam: int = type_beam
-        self.cell_belongings: list['Cell'] = [cell_belongings]
+        if not isinstance(cell_belongings, list):
+            self.cell_belongings: list['Cell'] = [cell_belongings]
+        else:
+            self.cell_belongings: list['Cell'] = cell_belongings
         self.index: Optional[int] = None
         self.angle_point_1: dict = {"radius": None, "angle": None, "L_zone": None}
         self.angle_point_2: dict = {"radius": None, "angle": None, "L_zone": None}
         self.length: float = self.get_length()
         self.volume: float = self.get_volume(sectionType="circular")
         self.beam_mod: bool = False
+        self.associated_beams_mod: List['Beam'] = []
         self.penalization_coefficient: float = 1.5  # Fixed with previous optimization
         self.initial_radius: Optional[float] = None
+
+    def destroy(self, check_orphan_nodes:bool = True) -> None:
+        """
+        Delete the beam and clean up references in points and cells.
+        This method removes the beam from its associated cells and points.
+        """
+        # delete the beam from the cells
+        for cell in list(self.cell_belongings):
+            _discard(cell.beams_cell, self)
+        self.cell_belongings.clear()
+
+        # delete the beam from the points
+        for p in (self.point1, self.point2):
+            cb = getattr(p, "connected_beams", None)
+            _discard(cb, self)
+
+
+        # delete the point if it has no more connected beams
+        for p in (self.point1, self.point2):
+            cb = getattr(p, "connected_beams", None)
+            if not cb:
+                p.destroy()
 
     def __repr__(self) -> str:
         return f"Beam({self.point1}, {self.point2}, radii:{self.radius}, Type:{self.type_beam}, Index:{self.index})"
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, Beam) and self.point1 == other.point1 and self.point2 == other.point2
+        return self is other
 
     def __hash__(self) -> int:
-        return hash((self.point1, self.point2))
+        return id(self)
 
     @property
     def data(self) -> List[int]:
@@ -140,16 +167,16 @@ class Beam(object):
                                     p2 = idx2
                                     break
 
-        if self.point1 == other.point1 or (p1 == 0 and p2 == 0):
+        if self.point1 is other.point1 or (p1 == 0 and p2 == 0):
             u = self.point2 - self.point1
             v = other.point2 - other.point1
-        elif self.point1 == other.point2 or (p1 == 0 and p2 == 1):
+        elif self.point1 is other.point2 or (p1 == 0 and p2 == 1):
             u = self.point2 - self.point1
             v = other.point1 - other.point2
-        elif self.point2 == other.point1 or (p1 == 1 and p2 == 0):
+        elif self.point2 is other.point1 or (p1 == 1 and p2 == 0):
             u = self.point1 - self.point2
             v = other.point2 - other.point1
-        elif self.point2 == other.point2 or (p1 == 1 and p2 == 1):
+        elif self.point2 is other.point2 or (p1 == 1 and p2 == 1):
             u = self.point1 - self.point2
             v = other.point1 - other.point2
         else:

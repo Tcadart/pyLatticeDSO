@@ -85,8 +85,6 @@ class LatticeOpti(LatticeSim):
 
         self.load_relative_density_model()
 
-
-
     def optimize_lattice(self):
         """
         Runs the optimization process using SLSQP.
@@ -130,10 +128,11 @@ class LatticeOpti(LatticeSim):
         if self.solution.success:
             print("\n✅ Optimization succeeded!")
             print("Optimal parameters:", self.solution.x)
+            if self.objective_type == "compliance":
+                print(f"Final compliance (non-normalized): {self.denorm_objective}")
         else:
             print("\n⚠️ Optimization failed!")
             print(self.solution.message)
-
     def redefine_optim_parameters(self, max_iteration: int = None, ftol: float = None, disp: bool = None,
                                   eps: float = None) -> None:
         """

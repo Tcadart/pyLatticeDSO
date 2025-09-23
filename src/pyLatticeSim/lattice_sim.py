@@ -53,6 +53,7 @@ class LatticeSim(Lattice):
         self.penalization_coefficient: float = 1.5  # Fixed with previous optimization
         self.surrogate_model_implemented = ["exact", "FE2", "nearest_neighbor", "linear", "RBF"]
         self.enable_gradient_computing = False # Enable gradient computing for optimization
+        self.is_penalized = False # True if the lattice has penalized beams at nodes
 
         self.define_connected_beams_for_all_nodes()
         self.define_angles_between_beams()
@@ -127,6 +128,11 @@ class LatticeSim(Lattice):
                     b3.set_beam_mod()
                     beams_to_add.append(b3)
 
+                if L1 > 0:
+                    b_mid.associated_beams_mod.append(b1)
+                if L2 > 0:
+                    b_mid.associated_beams_mod.append(b3)
+
                 beams_to_remove.append(beam)
 
             cell.add_beam(beams_to_add)
@@ -136,6 +142,95 @@ class LatticeSim(Lattice):
         self._refresh_nodes_and_beams()
         # Update index
         self.define_beam_node_index()
+        self.is_penalized = True
+
+    @timing.timeit
+    def reset_penalized_beams(self) -> None:
+        """
+        Revert the penalization modifications made by set_penalized_beams.
+        This involves:
+        - Rewiring beams to connect original nodes directly, bypassing penalized segments.
+        - Removing penalized beams and any orphaned nodes.
+        Note: This operation is only valid if the lattice has been previously penalized.
+        """
+        if not self.is_penalized:
+            print(Fore.YELLOW + "Warning: lattice does not appear to be penalized." + Style.RESET_ALL)
+            return
+
+        def _ensure_set(x):
+            if isinstance(x, set):
+                return x
+            return set(x) if x is not None else set()
+
+        def _remove_beams(cell, beams):
+            if not beams:
+                return
+            cell.remove_beam(list(beams))
+
+        def _remove_points(cell, pts):
+            if not pts:
+                return
+            cell.remove_point(list(pts))
+
+        def _rewire_end(bmid, old_node, new_node):
+            """Replace old_node by new_node at one end of bmid."""
+            if old_node is new_node:
+                return
+            old_node.connected_beams = _ensure_set(getattr(old_node, "connected_beams", None))
+            old_node.connected_beams.discard(bmid)
+
+            if bmid.point1 is old_node:
+                bmid.point1 = new_node
+            elif bmid.point2 is old_node:
+                bmid.point2 = new_node
+
+            new_node.connected_beams = _ensure_set(getattr(new_node, "connected_beams", None))
+            new_node.connected_beams.add(bmid)
+
+        for cell in self.cells:
+            beams = list(cell.beams_cell)
+
+            beams_to_delete = set()
+            orphan_points = set()
+
+            for bmid in beams:
+                if getattr(bmid, "beam_mod", False):
+                    continue
+
+                assoc = getattr(bmid, "associated_beams_mod", None)
+                if not assoc:
+                    continue
+
+                left_pen, right_pen = None, None
+                for b in assoc:
+                    if b.point1 is bmid.point1 or b.point2 is bmid.point1:
+                        left_pen = b
+                    elif b.point1 is bmid.point2 or b.point2 is bmid.point2:
+                        right_pen = b
+
+                if left_pen is not None:
+                    new_start = left_pen.point1 if left_pen.point2 is bmid.point1 else left_pen.point2
+                    _rewire_end(bmid, bmid.point1, new_start)
+                    beams_to_delete.add(left_pen)
+
+                if right_pen is not None:
+                    new_end = right_pen.point1 if right_pen.point2 is bmid.point2 else right_pen.point2
+                    _rewire_end(bmid, bmid.point2, new_end)
+                    beams_to_delete.add(right_pen)
+
+            _remove_beams(cell, beams_to_delete)
+
+            for p in list(cell.points_cell):
+                if getattr(p, "node_mod", False):
+                    p.connected_beams = _ensure_set(getattr(p, "connected_beams", None))
+                    if len(p.connected_beams) == 0:
+                        orphan_points.add(p)
+
+            _remove_points(cell, orphan_points)
+
+        self._refresh_nodes_and_beams()
+        self.define_beam_node_index()
+        self.is_penalized = False
 
     def define_simulation_parameters(self, name_file: str):
         """
@@ -1210,14 +1305,6 @@ class LatticeSim(Lattice):
         self.preconditioner = None
         self.iteration = 0
         self.residuals = []
-
-    def reset_penalized_beams(self):
-        """
-        Reset the penalized beams in the lattice.
-        """
-        for cell in self.cells:
-            cell.reset_beam_modification()
-        print(Fore.LIGHTYELLOW_EX + "Penalized beams have been reset." + Style.RESET_ALL)
 
     def get_global_force_displacement_curve(self, dof: int = 2) -> tuple[np.ndarray, np.ndarray]:
         """

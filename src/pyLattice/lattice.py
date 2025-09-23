@@ -132,6 +132,25 @@ class Lattice(object):
         except Exception as e:
             raise RuntimeError(f"Failed to load lattice from {path}: {e}")
 
+        if isinstance(lattice.beams, list):
+            lattice.beams = set(lattice.beams)
+        if isinstance(lattice.nodes, list):
+            lattice.nodes = set(lattice.nodes)
+
+        for cell in lattice.cells:
+            if isinstance(cell.beams_cell, list):
+                cell.beams_cell = set(cell.beams_cell)
+            if isinstance(getattr(cell, "points_cell", None), list):
+                cell.points_cell = set(cell.points_cell)
+
+        lattice._refresh_nodes_and_beams()
+
+        for n in lattice.nodes:
+            if not hasattr(n, "connected_beams") or n.connected_beams is None:
+                n.connected_beams = set()
+            elif isinstance(n.connected_beams, list):
+                n.connected_beams = set(n.connected_beams)
+
         print(f"Lattice loaded successfully from {path}")
         return lattice
 
@@ -520,13 +539,13 @@ class Lattice(object):
         """
         # Reset connected_beams
         for p in self.nodes:
-            p.connected_beams.clear()
+            p.connected_beams = set()
 
         # Single pass: attach each beam to its two endpoints
         for b in self.beams:
             a, c = b.point1, b.point2
-            if b not in a.connected_beams: a.connected_beams.append(b)
-            if b not in c.connected_beams: c.connected_beams.append(b)
+            a.connected_beams.add(b)
+            c.connected_beams.add(b)
 
         #  Optional stitching of coincident & periodic nodes via spatial hashing
         # Build spatial buckets
@@ -558,23 +577,15 @@ class Lattice(object):
             if getattr(self, "enable_periodicity", False):
                 add_to_periodic_bucket(periodic_buckets, p)
 
-
         def merge_bucket_connectivity(b):
-            """ Merge connectivity for all points in each bucket."""
             for pts in b.values():
                 if len(pts) <= 1:
                     continue
-                # union of beams connected to all points in the bucket
-                merged = []
-                seen = set()
+                merged = set()
                 for pt in pts:
-                    for bm in pt.connected_beams:
-                        if id(bm) not in seen:
-                            seen.add(id(bm))
-                            merged.append(bm)
-                # assign back
+                    merged.update(pt.connected_beams)
                 for pt in pts:
-                    pt.connected_beams = merged.copy()
+                    pt.connected_beams = set(merged)
 
         merge_bucket_connectivity(buckets)
         if getattr(self, "enable_periodicity", False):
@@ -653,11 +664,20 @@ class Lattice(object):
         This is useful after adding or removing cells to ensure
         that the lattice's nodes and beams accurately reflect its current state.
         """
+        self.refresh_cells_memberships()
         self.nodes = set()
         self.beams = set()
         for cell in self.cells:
             self.nodes.update(cell.points_cell)
             self.beams.update(cell.beams_cell)
+
+    def refresh_cells_memberships(self) -> None:
+        """
+        Public helper to refresh all cells' beams/points from the current global state.
+        """
+        for c in self.cells:
+            if hasattr(c, "refresh_from_global"):
+                c.refresh_from_global(self)
 
     def remove_cell(self, index: int) -> None:
         """
@@ -903,7 +923,7 @@ class Lattice(object):
 
             if beams_to_remove:
                 for b in beams_to_remove:
-                    cell.remove_beam(b)
+                    b.destroy()
             if beams_to_add:
                 cell.add_beam(list(beams_to_add))
 
@@ -912,6 +932,8 @@ class Lattice(object):
                 self.beams.update(beams_to_add)
 
         self.define_beam_node_index()
+        self._refresh_nodes_and_beams()
+
 
     def get_node_coordinates_data(self) -> list[list[float]]:
         """
@@ -1233,33 +1255,270 @@ class Lattice(object):
         threshold: float
             Threshold value for beam radii
         """
-        for cell in self.cells:
-            beamsToRemove = []
-            for beam in cell.beams_cell:
-                if beam.radius <= threshold:
-                    beamsToRemove.append(beam)
-            for beam in beamsToRemove:
-                cell.remove_beam(beam)
+        self._refresh_nodes_and_beams()
+        beam_to_remove = []
+        for beam in self.beams:
+            if beam.radius <= threshold:
+                beam_to_remove.append(beam)
+        for beam in beam_to_remove:
+            beam.destroy()
+        self._refresh_nodes_and_beams()
+        self.define_beam_node_index()
+        self.delete_orphan_points()
 
-    def delete_beams_with_geom_scheme(self, geomScheme: list[bool]) -> None:
+    def delete_orphan_points(self):
         """
-        Delete beams based on the geometry scheme.
-        If geomScheme[i] is False, the beam of type_beam i will be removed.
-        Usefull for hybrid lattices geometry.
+        Delete points that are not connected to any beam in the lattice.
+        """
+        live_points = set()
+        for b in self.beams:
+            live_points.add(b.point1)
+            live_points.add(b.point2)
+
+        all_points = set()
+        for c in self.cells:
+            all_points.update(c.points_cell)
+
+        orphan_points = all_points - live_points
+
+        for p in orphan_points:
+            p.destroy()
+
+        self._refresh_nodes_and_beams()
+        self.define_beam_node_index()
+
+    def merge_degree2_nodes(
+            self,
+            colinear_only: bool = True,
+            angle_tol: float = 1e-9,
+            radius_strategy: str = "inherit",  # "inherit" | "max" | "min" | "avg"
+            type_strategy: str = "inherit",  # "inherit" -> si différents, on prend b1
+            material_strategy: str = "inherit",  # idem
+            iterative: bool = True,
+            max_passes: int = 10,
+    ) -> int:
+        """
+        Fusion of nodes with exactly 2 connected beams.
+        The two beams must be colinear (if colinear_only=True) and the node must be between the two beam endpoints.
+        The two beams are replaced by a single beam connecting the two distant endpoints.
 
         Parameters:
         -----------
-        geomScheme: list of bool
-            List of N boolean values indicating the scheme of geometry to optimize
-            If geomScheme[i] is False, the beam of type_beam i will be removed.
+        colinear_only : bool
+            If True, only merge if the two beams are colinear.
+        angle_tol : float
+            Tolerance for colinearity check (smaller = stricter).
+        radius_strategy : str
+            Strategy for determining the radius of the new beam:
+            "inherit" (default) - if both beams have the same radius, use it; otherwise use b1's radius.
+            "max" - use the maximum radius of the two beams.
+            "min" - use the minimum radius of the two beams.
+            "avg" - use the average radius of the two beams.
+        type_strategy : str
+            Strategy for determining the type of the new beam:
+            "inherit" (default) - if both beams have the same type, use it; otherwise use b1's type.
+            "max" - use the maximum type of the two beams.
+            "min" - use the minimum type of the two beams.
+            "avg" - use the average type of the two beams (rounded).
+        material_strategy : str
+            Strategy for determining the material of the new beam:
+            "inherit" (default) - if both beams have the same material, use it; otherwise use b1's material.
+            "max" - use the maximum material of the two beams.
+            "min" - use the minimum material of the two beams.
+            "avg" - use the average material of the two beams (rounded).
+        iterative : bool
+            If True, repeat the merging process until no more merges are possible or max_passes is reached.
+        max_passes : int
+            Maximum number of passes if iterative is True.
+
+        Returns:
+        --------
+        total_merged : int
+            Total number of nodes merged.
         """
-        for cell in self.cells:
-            beamsToRemove = []
-            for beam in cell.beams_cell:
-                if not geomScheme[beam.type_beam]:
-                    beamsToRemove.append(beam)
-            for beam in beamsToRemove:
-                cell.remove_beam(beam)
+
+        def _has_beam_between(a, c):
+            # Check if a beam already exists between points a and c
+            for b in self.beams:
+                if (b.point1 is a and b.point2 is c) or (b.point1 is c and b.point2 is a):
+                    return True
+            return False
+
+        def _choose(val1, val2, how, avg_fn=None):
+            if how == "inherit":
+                return val1 if val1 == val2 or val2 is None else val1
+            if how == "max":
+                return max(val1, val2)
+            if how == "min":
+                return min(val1, val2)
+            if how == "avg":
+                return (val1 + val2) * 0.5 if avg_fn is None else avg_fn(val1, val2)
+            return val1
+
+        total_merged = 0
+        passes = 0
+
+        while True:
+            passes += 1
+            # Redefine connectivity
+            self.define_connected_beams_for_all_nodes()
+
+            candidates = [p for p in self.nodes if len(getattr(p, "connected_beams", [])) == 2]
+            if not candidates:
+                break
+
+            used_beams = set()
+            merges = []
+            for p in candidates:
+                b1, b2 = p.connected_beams
+                if b1 in used_beams or b2 in used_beams:
+                    continue
+
+                a = b1.point1 if b1.point2 is p else b1.point2
+                c = b2.point1 if b2.point2 is p else b2.point2
+                if a is c:
+                    continue
+
+                if colinear_only:
+                    v1 = np.array([a.x - p.x, a.y - p.y, a.z - p.z], dtype=float)
+                    v2 = np.array([c.x - p.x, c.y - p.y, c.z - p.z], dtype=float)
+                    n1 = np.linalg.norm(v1)
+                    n2 = np.linalg.norm(v2)
+                    if n1 <= 0.0 or n2 <= 0.0:
+                        continue
+
+                    cross_norm = np.linalg.norm(np.cross(v1, v2))
+                    if cross_norm > angle_tol * (n1 * n2):
+                        continue
+                    if float(np.dot(v1, v2)) >= 0.0:
+                        continue
+
+                if _has_beam_between(a, c):
+                    continue
+
+                merges.append((p, b1, b2, a, c))
+                used_beams.add(b1)
+                used_beams.add(b2)
+
+            if not merges:
+                break
+
+            beams_to_remove = set()
+            beams_to_add = set()
+            points_to_destroy = set()
+
+            for (p, b1, b2, a, c) in merges:
+                radius = _choose(b1.radius, b2.radius, radius_strategy)
+                typ = b1.type_beam if (type_strategy == "inherit" or b1.type_beam == b2.type_beam) else b1.type_beam
+                mat = b1.material if (material_strategy == "inherit" or b1.material == b2.material) else b1.material
+
+                cells_union = set()
+                for bm in (b1, b2):
+                    for cell in getattr(bm, "cell_belongings", []):
+                        cells_union.add(cell)
+
+                new_beam = Beam(a, c, radius, mat, typ, list(cells_union))
+
+                for bm in (b1, b2):
+                    for cell in list(set(getattr(bm, "cell_belongings", []))):
+                        cell.remove_beam(bm)
+
+                for cell in cells_union:
+                    cell.add_beam([new_beam])
+
+                beams_to_remove.update([b1, b2])
+                beams_to_add.add(new_beam)
+                points_to_destroy.add(p)
+
+            self.beams.difference_update(beams_to_remove)
+            self.beams.update(beams_to_add)
+
+            for p in points_to_destroy:
+                p.destroy()
+
+            self._refresh_nodes_and_beams()
+            self.define_beam_node_index()
+
+            merged_this_pass = len(merges)
+            total_merged += merged_this_pass
+
+            if not iterative or passes >= max_passes:
+                break
+
+        # Au cas où certains nœuds deviennent orphelins après fusion
+        self.delete_orphan_points()
+
+        return total_merged
+
+    def delete_unconnected_beams(
+            self,
+            protect_fixed: bool = True,
+            protect_loaded: bool = True,
+            also_delete_orphan_nodes: bool = True
+    ) -> tuple[int, int]:
+        """
+        Delete beams that are "leaf" beams, i.e. connected to at least one node of degree 1 or 0.
+
+        Parameters:
+        -----------
+        protect_fixed: bool
+            If True, do not delete beams connected to fixed nodes.
+        protect_loaded: bool
+            If True, do not delete beams connected to loaded nodes.
+        also_delete_orphan_nodes: bool
+            If True, delete nodes that become orphaned after beam removal.
+
+        Returns:
+        --------
+        tuple[int, int]
+            Number of beams removed and number of nodes removed.
+        """
+        # Deactivate periodicity to ensure correct connectivity checks
+        self.enable_periodicity = False
+        # Identify beams to remove
+        self.define_connected_beams_for_all_nodes()
+
+        to_remove = set()
+
+        for b in list(self.beams):
+            deg1 = len(b.point1.connected_beams)
+            deg2 = len(b.point2.connected_beams)
+            is_leaf_bar = (deg1 <= 1 or deg2 <= 1)
+
+            if not is_leaf_bar:
+                continue
+
+
+            p1_fixed = any(b.point1.fixed_DOF)
+            p2_fixed = any(b.point2.fixed_DOF)
+            p1_load = any(abs(v) > 0.0 for v in b.point1.applied_force)
+            p2_load = any(abs(v) > 0.0 for v in b.point2.applied_force)
+
+            # Protect beams connected to fixed or loaded nodes if specified
+            if protect_fixed and (p1_fixed or p2_fixed):
+                continue
+            if protect_loaded and (p1_load or p2_load):
+                continue
+
+            to_remove.add(b)
+
+
+        if not to_remove:
+            return 0, 0
+
+        # Remove identified beams from cells
+        for b in to_remove:
+            b.radius = 0.0
+
+        self._refresh_nodes_and_beams()
+        self.define_beam_node_index()
+
+        # Delete orphan nodes if specified
+        removed_pts = 0
+        if also_delete_orphan_nodes:
+            self.delete_orphan_points()
+
+        return len(to_remove), removed_pts
 
     @timing.timeit
     def generate_mesh_lattice_Gmsh(self, cut_mesh_at_boundary: bool = False, mesh_size: float = 0.05,

@@ -35,7 +35,7 @@
       "periodicity": true,
       "DDM": {
         "enable_preconditioner": true,
-        "max_iterations": 100,
+        "max_iterations": 20,
         "schur_complement_computation": {
           "type": "RBF",
           "precision_greedy": 1e-6
@@ -61,7 +61,7 @@
   "optimization_informations": {
       "objective_function": "min",
       "objective_type": "compliance",
-      "max_iterations": 50,
+      "max_iterations": 20,
       "optimization_parameters": {
         "type": "unit_cell",
         "hybrid": false
