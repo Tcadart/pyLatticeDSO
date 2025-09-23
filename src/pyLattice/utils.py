@@ -7,10 +7,14 @@ import math
 import os
 import pickle
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, TYPE_CHECKING
 
 import numpy as np
 import matplotlib.colors as mcolors
+
+if TYPE_CHECKING:
+    from pyLattice.lattice import Lattice
+
 
 def open_lattice_parameters(file_name: str):
     """
@@ -144,27 +148,89 @@ def function_penalization_Lzone(radius: float, angle: float) -> float:
     return radius / math.tan(math.radians(angle) / 2)
 
 
+
+# --- in pyLattice/utils.py: replace save_lattice_object with the version below ---
+
 def save_lattice_object(lattice, file_name: str = "LatticeObject") -> None:
     """
-    Save the lattice object to a file.
+    Save ONLY the base `Lattice` state to a pickle, even if `lattice` is an instance
+    of a subclass (e.g., LatticeSim/LatticeOpti) carrying non-picklable fields.
 
-    Parameters:
-    -----------
-    file_name: str
-        Name of the file to save (with or without the '.pkl' extension).
+    Important: converts internal sets (beams/nodes and per-cell containers) to lists
+    before pickling to avoid hashing during unpickling. A marker `_pickle_format`
+    is stored so the loader can restore sets later.
     """
+    import pickle
+    from pathlib import Path
+
+    def _find_base_lattice_cls(obj):
+        for cls in obj.__class__.__mro__:
+            if cls.__name__ == "Lattice" and getattr(cls, "__module__", "").endswith("pyLattice.lattice"):
+                return cls
+        return None
+
+    def _extract_base_lattice(obj):
+        base_cls = _find_base_lattice_cls(obj)
+        if base_cls is not None and obj.__class__ is not base_cls:
+            base = object.__new__(base_cls)
+            base_attrs = [
+                "_verbose",
+                "name_lattice",
+                "x_min", "y_min", "z_min", "x_max", "y_max", "z_max",
+                "cell_size_x", "cell_size_y", "cell_size_z",
+                "num_cells_x", "num_cells_y", "num_cells_z",
+                "size_x", "size_y", "size_z",
+                "radii", "geom_types",
+                "grad_dim", "grad_radius", "grad_mat",
+                "symmetry_lattice", "uncertainty_node", "eraser_blocks",
+                "enable_periodicity", "enable_simulation_properties",
+                "_simulation_flag", "_optimization_flag",
+                "cells", "beams", "nodes",
+                "edge_tags", "face_tags", "corner_tags",
+                "lattice_dimension_dict", "occupancy_matrix", "mesh_lattice",
+            ]
+            for a in base_attrs:
+                setattr(base, a, getattr(obj, a, None))
+            # ensure potentially problematic refs are dropped
+            setattr(base, "mesh_trimmer", None)
+        else:
+            base = obj
+
+        # --- make pickle-safe: convert sets to lists everywhere ---
+        # top-level
+        if isinstance(getattr(base, "beams", None), set):
+            base.beams = list(base.beams)
+        if isinstance(getattr(base, "nodes", None), set):
+            base.nodes = list(base.nodes)
+
+        # per-cell containers
+        for c in getattr(base, "cells", []) or []:
+            if hasattr(c, "beams_cell") and isinstance(c.beams_cell, set):
+                c.beams_cell = list(c.beams_cell)
+            if hasattr(c, "points_cell") and isinstance(c.points_cell, set):
+                c.points_cell = list(c.points_cell)
+
+        # mark format for loader
+        setattr(base, "_pickle_format", "lattice_v2_lists")
+        return base
+
     project_root = Path(__file__).resolve().parents[2]
     path = project_root / "data" / "outputs" / "saved_lattice_file" / file_name
     if path.suffix != ".pkl":
-        path = path.with_suffix('.pkl')
+        path = path.with_suffix(".pkl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    lattice_to_save = _extract_base_lattice(lattice)
 
     try:
         with open(path, "wb") as file:
-            pickle.dump(lattice, file)
+            pickle.dump(lattice_to_save, file, protocol=pickle.HIGHEST_PROTOCOL)
     except Exception as e:
         raise IOError(f"Failed to save lattice pickle: {e}")
 
-    print(f"Lattice pickle saved successfully to {path}")
+    print(f"Lattice (base state) pickle saved successfully to {path}")
+
+
 
 
 def _prepare_lattice_plot_data(beam, deformedForm: bool = False):

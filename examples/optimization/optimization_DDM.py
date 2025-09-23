@@ -19,7 +19,7 @@ lattice_object = LatticeOpti(path + name_file, verbose=1, convergence_plotting =
 lattice_object.optimize_lattice()
 
 save_JSON_to_Grasshopper(lattice_object, name_file + "_optimized")
-save_lattice_object(lattice_object, name_file + "_saved")
+save_lattice_object(lattice_object, name_file + "_optimized")
 
 # Visualization optimized lattice
 vizualizer = LatticePlotting()
