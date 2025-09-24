@@ -6,28 +6,12 @@
         "z": 1
       },
     "number_of_cells": {
-      "x": 6,
-      "y": 1,
-      "z": 6
+      "x": 10,
+      "y": 5,
+      "z": 5
     },
     "radii": [0.05, 0.05, 0.05],
     "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
-  },
-  "suplementary": {
-    "erased_blocks": {
-      "block_0": {
-        "start_point": {
-          "x": 3.0,
-          "y": 0.0,
-          "z": 3.0
-        },
-        "dimensions_block": {
-          "x": 3.0,
-          "y": 1.0,
-          "z": 3.0
-        }
-      }
-    }
   },
     "simulation_parameters": {
       "enable" : true,
@@ -43,18 +27,24 @@
       }
   },
   "boundary_conditions": {
-    "Force": {
-      "Load": {
-        "Surface": ["Xmax", "Zmin"],
-        "DOF": ["Z"],
-        "Value": [-0.1]
+    "Displacement": {
+      "Fixed" : {
+        "Surface": ["Xmax"],
+        "DOF": ["X"],
+        "Value": [0]
+      },
+      "SimpleSupport": {
+        "Surface": ["Xmin", "Zmin"],
+        "DOF": ["Y", "Z"],
+        "Value": [0, 0],
+        "SurfaceCells": ["Xmax", "Zmin"]
       }
     },
-    "Displacement": {
-      "Encastre": {
-        "Surface": ["Zmax"],
-        "DOF": ["X", "Y", "Z", "RX", "RY", "RZ"],
-        "Value": [0, 0, 0, 0, 0, 0]
+    "Force": {
+      "Load": {
+        "Surface": ["Xmax", "Zmax"],
+        "DOF": ["Z"],
+        "Value": [-0.1]
       }
     }
   },
@@ -63,7 +53,7 @@
       "objective_type": "compliance",
       "max_iterations": 20,
       "optimization_parameters": {
-        "type": "unit_cell",
+        "type": "constant",
         "hybrid": false
       },
       "constraints": {

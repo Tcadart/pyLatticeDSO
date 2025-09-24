@@ -8,7 +8,7 @@ from pyLattice.utils import save_JSON_to_Grasshopper, save_lattice_object
 
 path = "optimization/"
 # name_file = "optimization_DDM_surrogate"
-name_file = "Cantilever_L_beam"
+name_file = "Three_point_bending"
 
 lattice_object = LatticeOpti(path + name_file, verbose=1, convergence_plotting = True)
 
@@ -21,7 +21,7 @@ save_JSON_to_Grasshopper(lattice_object, name_file + "_optimized")
 save_lattice_object(lattice_object, name_file + "_optimized")
 
 # Visualization optimized lattice
-vizualizer = LatticePlotting()
+# vizualizer = LatticePlotting()
 # vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", enable_boundary_conditions=True,
 #                              deformedForm = True, use_radius_grad_color=True)
-vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", use_radius_grad_color=True)
+# vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", use_radius_grad_color=True)

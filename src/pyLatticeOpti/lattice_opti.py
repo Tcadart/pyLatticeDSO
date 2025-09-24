@@ -224,7 +224,10 @@ class LatticeOpti(LatticeSim):
             self.initial_parameters = [0.0] * (self.number_parameters - 1)
             self.initial_parameters.append(1)
         elif self.optimization_parameters["type"] == "constant":
-            self.initial_parameters = [initial_value] * self.number_parameters
+            if self.optimization_parameters.get("hybrid", False):
+                self.initial_parameters = self.normalize_optimization_parameters(self.radii)
+            else:
+                self.initial_parameters = [initial_value]
         else:
             raise ValueError("Invalid optimization parameters type.")
 
@@ -684,9 +687,24 @@ class LatticeOpti(LatticeSim):
             print(Style.DIM + "Optimization parameters: ", self.actual_optimization_parameters, Style.RESET_ALL)
 
         if self.optimization_parameters["type"] == "constant":
-            for cell in self.cells:
-                radius = self.denormalize_optimization_parameters([float(optimization_parameters_actual[0])])[0]
-                cell.change_beam_radius([radius] * len(self.geom_types))
+            hybrid = bool(self.optimization_parameters.get("hybrid", False))
+            if hybrid:
+                if len(optimization_parameters_actual) != len(self.geom_types):
+                    raise ValueError(
+                        f"Expected {len(self.geom_types)} parameters for hybrid constant mode, "
+                        f"got {len(optimization_parameters_actual)}."
+                    )
+                per_geom = self.denormalize_optimization_parameters(
+                    list(map(float, optimization_parameters_actual))
+                )
+                for cell in self.cells:
+                    cell.change_beam_radius(per_geom)
+            else:
+                radius = self.denormalize_optimization_parameters(
+                    [float(optimization_parameters_actual[0])]
+                )[0]
+                for cell in self.cells:
+                    cell.change_beam_radius([radius] * len(self.geom_types))
         elif self.optimization_parameters["type"] == "unit_cell":
             number_parameters_per_cell = len(self.geom_types)
             for cell in self.cells:
@@ -942,50 +960,27 @@ class LatticeOpti(LatticeSim):
             hybrid = bool(self.optimization_parameters.get("hybrid", False))
 
             if hybrid:
-                # One parameter per geometry type
                 accum = np.zeros(n_geom, dtype=float)
                 for cell in self.cells:
                     if cell.node_in_order_simulation is None:
                         cell.define_node_order_to_simulate()
-                    u_cell = np.array(cell.get_displacement_at_nodes(cell.node_in_order_simulation), dtype=float).ravel()
-
+                    u_cell = np.array(cell.get_displacement_at_nodes(cell.node_in_order_simulation),
+                                      dtype=float).ravel()
                     for j_local, dS in enumerate(getattr(cell, "schur_complement_gradient", [])):
                         dF_cell = dS @ u_cell
-
-                        contrib = 0.0
-                        idx_flat = 0
-                        for node in cell.node_in_order_simulation:
-                            for k in range(6):
-                                if node.fixed_DOF[k]:
-                                    u_k = node.displacement_vector[k]
-                                    contrib += u_k * dF_cell[idx_flat]
-                                idx_flat += 1
-
-                        accum[j_local] += half_factor * contrib
-
-                # Chain rule for normalization (each geom shares same scale)
-                grad[:n_geom] = accum * norm_scale
-
+                        accum[j_local] += float(u_cell @ dF_cell)
+                grad[:n_geom] = accum
             else:
-                # Single parameter affecting all geometry types equally
                 total_contrib = 0.0
                 for cell in self.cells:
                     if cell.node_in_order_simulation is None:
                         cell.define_node_order_to_simulate()
-                    u_cell = np.array(cell.get_displacement_at_nodes(cell.node_in_order_simulation), dtype=float).ravel()
-
+                    u_cell = np.array(cell.get_displacement_at_nodes(cell.node_in_order_simulation),
+                                      dtype=float).ravel()
                     for dS in getattr(cell, "schur_complement_gradient", []):
                         dF_cell = dS @ u_cell
-
-                        idx_flat = 0
-                        for node in cell.node_in_order_simulation:
-                            for k in range(6):
-                                if node.fixed_DOF[k]:
-                                    u_k = node.displacement_vector[k]
-                                    total_contrib += u_k * dF_cell[idx_flat]
-                                idx_flat += 1
-
-                grad[0] = half_factor * total_contrib * norm_scale
+                        total_contrib += float(u_cell @ dF_cell)
+                grad[0] = total_contrib
 
         else:
             raise NotImplementedError("Gradient for optimization type '{opt_type}' not implemented yet.")

@@ -133,6 +133,7 @@ class Lattice(object):
         except Exception as e:
             raise RuntimeError(f"Failed to load lattice from {path}: {e}")
 
+
         if isinstance(lattice.beams, list):
             lattice.beams = set(lattice.beams)
         if isinstance(lattice.nodes, list):
