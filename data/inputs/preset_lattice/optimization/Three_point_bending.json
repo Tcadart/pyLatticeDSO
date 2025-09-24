@@ -53,12 +53,12 @@
       "objective_type": "compliance",
       "max_iterations": 20,
       "optimization_parameters": {
-        "type": "constant",
+        "type": "unit_cell",
         "hybrid": false
       },
       "constraints": {
         "relative_density": {
-          "value": 0.3
+          "value": 0.15
         }
       },
       "enable_parameter_normalization": true,

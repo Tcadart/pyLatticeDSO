@@ -1197,73 +1197,171 @@ class Lattice(object):
             raise ValueError("A mesh object must be assigned to the lattice before cutting beams.")
         self.mesh_trimmer.cut_beams_at_mesh_intersection(self.cells)
 
+    # @timing.timeit
+    # def apply_symmetry(self, symmetry_plane:str = None, reference_point: Tuple = None) -> None:
+    #     """
+    #     Apply symmetry to the lattice structure based on a reference point.
+    #
+    #     Parameters:
+    #     -----------
+    #     symmetry_plane: str, optional
+    #         Plane of symmetry ('XY', 'XZ', 'YZ', 'X', 'Y', or 'Z'). If None, uses self.symmetry_lattice.
+    #     reference_point: tuple, optional
+    #         Reference point for symmetry (x_ref, y_ref, z_ref). If None, uses self.symmetry_lattice.
+    #     """
+    #     if symmetry_plane is None and reference_point is None:
+    #         symmetry_plane, reference_point = self.symmetry_lattice["sym_plane"], self.symmetry_lattice["sym_point"]
+    #     if symmetry_plane is None or reference_point is None:
+    #         raise ValueError("Both symmetry_plane and reference_point must be provided.")
+    #     symmetry_plane = symmetry_plane.upper()
+    #     if symmetry_plane not in ["XY", "XZ", "YZ", "X", "Y", "Z"]:
+    #         raise ValueError("Invalid symmetry plane. Choose from 'XY', 'XZ', 'YZ', 'X', 'Y', or 'Z'.")
+    #
+    #     x_ref, y_ref, z_ref = reference_point
+    #     new_cells = []
+    #     node_map = {}
+    #
+    #     for cell in self.cells:
+    #         new_pos = list(cell.pos)
+    #         new_start_pos = np.array(cell.coordinate)
+    #         mirrored_beams = []
+    #
+    #         for beam in cell.beams_cell:
+    #             new_point1 = Point(beam.point1.x, beam.point1.y, beam.point1.z)
+    #             new_point2 = Point(beam.point2.x, beam.point2.y, beam.point2.z)
+    #
+    #             # Apply symmetry transformation based on the selected plane
+    #             if symmetry_plane == "XY":
+    #                 new_point1.z = 2 * z_ref - new_point1.z
+    #                 new_point2.z = 2 * z_ref - new_point2.z
+    #                 new_start_pos[2] = 2 * z_ref - new_start_pos[2]
+    #             elif symmetry_plane == "XZ":
+    #                 new_point1.y = 2 * y_ref - new_point1.y
+    #                 new_point2.y = 2 * y_ref - new_point2.y
+    #                 new_start_pos[1] = 2 * y_ref - new_start_pos[1]
+    #             elif symmetry_plane == "YZ":
+    #                 new_point1.x = 2 * x_ref - new_point1.x
+    #                 new_point2.x = 2 * x_ref - new_point2.x
+    #                 new_start_pos[0] = 2 * x_ref - new_start_pos[0]
+    #             elif symmetry_plane == "X":
+    #                 new_point1.x = 2 * x_ref - new_point1.x
+    #                 new_point2.x = 2 * x_ref - new_point2.x
+    #                 new_start_pos[0] = 2 * x_ref - new_start_pos[0]
+    #             elif symmetry_plane == "Y":
+    #                 new_point1.y = 2 * y_ref - new_point1.y
+    #                 new_point2.y = 2 * y_ref - new_point2.y
+    #                 new_start_pos[1] = 2 * y_ref - new_start_pos[1]
+    #             elif symmetry_plane == "Z":
+    #                 new_point1.z = 2 * z_ref - new_point1.z
+    #                 new_point2.z = 2 * z_ref - new_point2.z
+    #                 new_start_pos[2] = 2 * z_ref - new_start_pos[2]
+    #
+    #             # Ensure uniqueness of nodes
+    #             if new_point1 not in node_map:
+    #                 node_map[new_point1] = new_point1
+    #             if new_point2 not in node_map:
+    #                 node_map[new_point2] = new_point2
+    #
+    #             mirrored_beams.append(
+    #                 Beam(node_map[new_point1], node_map[new_point2], beam.radius, beam.material, beam.type_beam, ))
+    #
+    #         # Create a new mirrored cell
+    #         new_cell = Cell(new_pos, cell.size, list(new_start_pos), cell.geom_types, cell.radii, cell.grad_radius,
+    #                         cell.grad_dim, cell.grad_mat, cell.uncertainty_node, self._verbose)
+    #
+    #         new_cell.beams_cell = mirrored_beams
+    #         new_cells.append(new_cell)
+    #
+    #     self.cells.extend(new_cells)
+    #     self.define_lattice_dimensions()  # Recalculate the lattice boundaries
+
     @timing.timeit
-    def apply_symmetry(self) -> None:
+    def apply_symmetry(self, symmetry_plane: str = None, reference_point: Tuple = None) -> None:
         """
-        Apply symmetry to the lattice structure based on a reference point.
+        Mirror the whole lattice w.r.t. a plane and append the mirrored copy.
+        - Deduplicates mirrored nodes globally (by rounded coordinates).
+        - Preserves sets for beams/points at cell level.
+        - Updates self.nodes / self.beams if they exist.
+        - Recomputes lattice bounding box at the end.
         """
-        symmetry_plane, reference_point = self.symmetry_lattice["sym_plane"], self.symmetry_lattice["sym_point"]
+        if symmetry_plane is None and reference_point is None:
+            symmetry_plane, reference_point = self.symmetry_lattice["sym_plane"], self.symmetry_lattice["sym_point"]
+        if symmetry_plane is None or reference_point is None:
+            raise ValueError("Both symmetry_plane and reference_point must be provided.")
         symmetry_plane = symmetry_plane.upper()
-        if symmetry_plane not in ["XY", "XZ", "YZ", "X", "Y", "Z"]:
+        if symmetry_plane not in {"XY", "XZ", "YZ", "X", "Y", "Z"}:
             raise ValueError("Invalid symmetry plane. Choose from 'XY', 'XZ', 'YZ', 'X', 'Y', or 'Z'.")
 
         x_ref, y_ref, z_ref = reference_point
-        new_cells = []
-        node_map = {}
+
+        def mirror_coords(x: float, y: float, z: float) -> Tuple[float, float, float]:
+            if symmetry_plane in {"XY", "Z"}:
+                return x, y, 2 * z_ref - z
+            if symmetry_plane in {"XZ", "Y"}:
+                return x, 2 * y_ref - y, z
+            # YZ or X
+            return 2 * x_ref - x, y, z
+
+        new_cells: list[Cell] = []
+        new_global_beams = []
+        new_global_nodes = []
 
         for cell in self.cells:
-            new_pos = list(cell.pos)
-            new_start_pos = np.array(cell.coordinate)
-            mirrored_beams = []
+            # Mirror the cell origin/coordinate; size and pos are kept identical
+            cx, cy, cz = cell.coordinate
+            dx, dy, dz = cell.size
 
-            for beam in cell.beams_cell:
-                new_point1 = Point(beam.point1.x, beam.point1.y, beam.point1.z)
-                new_point2 = Point(beam.point2.x, beam.point2.y, beam.point2.z)
+            # Mirror min-corner of the box correctly: x'min = 2*x_ref - (x_min + dx), etc.
+            if symmetry_plane in {"YZ", "X"}:
+                mcx = 2 * x_ref - (cx + dx)
+            else:
+                mcx = cx
 
-                # Apply symmetry transformation based on the selected plane
-                if symmetry_plane == "XY":
-                    new_point1.z = 2 * z_ref - new_point1.z
-                    new_point2.z = 2 * z_ref - new_point2.z
-                    new_start_pos[2] = 2 * z_ref - new_start_pos[2]
-                elif symmetry_plane == "XZ":
-                    new_point1.y = 2 * y_ref - new_point1.y
-                    new_point2.y = 2 * y_ref - new_point2.y
-                    new_start_pos[1] = 2 * y_ref - new_start_pos[1]
-                elif symmetry_plane == "YZ":
-                    new_point1.x = 2 * x_ref - new_point1.x
-                    new_point2.x = 2 * x_ref - new_point2.x
-                    new_start_pos[0] = 2 * x_ref - new_start_pos[0]
-                elif symmetry_plane == "X":
-                    new_point1.x = 2 * x_ref - new_point1.x
-                    new_point2.x = 2 * x_ref - new_point2.x
-                    new_start_pos[0] = 2 * x_ref - new_start_pos[0]
-                elif symmetry_plane == "Y":
-                    new_point1.y = 2 * y_ref - new_point1.y
-                    new_point2.y = 2 * y_ref - new_point2.y
-                    new_start_pos[1] = 2 * y_ref - new_start_pos[1]
-                elif symmetry_plane == "Z":
-                    new_point1.z = 2 * z_ref - new_point1.z
-                    new_point2.z = 2 * z_ref - new_point2.z
-                    new_start_pos[2] = 2 * z_ref - new_start_pos[2]
+            if symmetry_plane in {"XZ", "Y"}:
+                mcy = 2 * y_ref - (cy + dy)
+            else:
+                mcy = cy
 
-                # Ensure uniqueness of nodes
-                if new_point1 not in node_map:
-                    node_map[new_point1] = new_point1
-                if new_point2 not in node_map:
-                    node_map[new_point2] = new_point2
+            if symmetry_plane in {"XY", "Z"}:
+                mcz = 2 * z_ref - (cz + dz)
+            else:
+                mcz = cz
 
-                mirrored_beams.append(
-                    Beam(node_map[new_point1], node_map[new_point2], beam.radius, beam.material, beam.type_beam, ))
+            new_coord = [mcx, mcy, mcz]
 
-            # Create a new mirrored cell
-            new_cell = Cell(new_pos, cell.size, list(new_start_pos), cell.geom_types, cell.radii, cell.grad_radius,
-                            cell.grad_dim, cell.grad_mat, cell.uncertainty_node, self._verbose)
+            # Build the mirrored cell
+            new_cell = Cell(
+                pos=list(cell.pos),
+                initial_size=list(cell.size),
+                coordinate=list(new_coord),
+                geom_types=list(cell.geom_types),
+                radii=list(cell.radii),
+                grad_radius=cell.grad_radius,
+                grad_dim=cell.grad_dim,
+                grad_mat=cell.grad_mat,
+                uncertainty_node=getattr(cell, "uncertainty_node", 0.0),
+                _verbose=getattr(self, "_verbose", 0),
+            )
 
-            new_cell.beams_cell = mirrored_beams
             new_cells.append(new_cell)
 
+        # Append mirrored structures to lattice
         self.cells.extend(new_cells)
-        self.define_lattice_dimensions()  # Recalculate the lattice boundaries
+
+        if hasattr(self, "beams"):
+            if isinstance(self.beams, set):
+                self.beams.update(new_global_beams)
+            elif isinstance(self.beams, list):
+                self.beams.extend(new_global_beams)
+
+        if hasattr(self, "nodes"):
+            if isinstance(self.nodes, set):
+                self.nodes.update(new_global_nodes)
+            elif isinstance(self.nodes, list):
+                self.nodes.extend(new_global_nodes)
+
+        # Recompute lattice dimensions/bounding box
+        self.define_lattice_dimensions()
 
     def delete_beams_under_radius_threshold(self, threshold: float = 0.01) -> None:
         """

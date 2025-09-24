@@ -15,7 +15,15 @@ lattice_object = LatticeOpti(path + name_file, verbose=1, convergence_plotting =
 lattice_object.optimize_lattice()
 
 lattice_object.reset_penalized_beams()
-# lattice_object.delete_beams_under_radius_threshold(0.015)
+
+# if name_file == "Three_point_bending":
+#     lattice_object.apply_symmetry(symmetry_plane="YZ", reference_point=(10,0,0))
+#     print("Symmetry applied")
+
+vizualizer = LatticePlotting()
+# vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", enable_boundary_conditions=True,
+#                              deformedForm = True, use_radius_grad_color=True)
+vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", use_radius_grad_color=True)
 
 save_JSON_to_Grasshopper(lattice_object, name_file + "_optimized")
 save_lattice_object(lattice_object, name_file + "_optimized")
