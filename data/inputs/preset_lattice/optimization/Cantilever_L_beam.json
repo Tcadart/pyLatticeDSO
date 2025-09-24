@@ -10,7 +10,7 @@
       "y": 1,
       "z": 6
     },
-    "radii": [0.1, 0.1, 0.1],
+    "radii": [0.05, 0.05, 0.05],
     "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
   },
   "suplementary": {
@@ -68,7 +68,7 @@
       },
       "constraints": {
         "relative_density": {
-          "value": 0.15
+          "value": 0.1
         }
       },
       "enable_parameter_normalization": true,

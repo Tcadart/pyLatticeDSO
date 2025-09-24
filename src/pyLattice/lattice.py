@@ -18,6 +18,7 @@ from collections import Counter
 import gmsh
 
 from .cell import *
+from .plotting_lattice import LatticePlotting
 from .timing import *
 from .utils import _validate_inputs_lattice, open_lattice_parameters
 from .gradient_properties import get_grad_settings, grad_material_setting, grad_settings_constant
@@ -877,63 +878,80 @@ class Lattice(object):
         Check if beam in hybrid configuration is cut by a point in the geometry
         Change the beam configuration of collisionned beams
         """
-        for cell in self.cells:
-            beams_iter = set(cell.beams_cell)
-            points_iter = set(cell.points_cell)
+        all_beams = list(self.beams)
+        beams_to_remove = set()
+        beams_to_add_global = set()
 
-            beams_to_remove = set()
-            beams_to_add = set()
+        per_cell_rem = {c: set() for c in self.cells}
+        per_cell_add = {c: set() for c in self.cells}
+        per_cell_pts = {c: set() for c in self.cells}
 
-            for beam in beams_iter:
-                p1, p2 = beam.point1, beam.point2
+        for beam in all_beams:
+            p1, p2 = beam.point1, beam.point2
 
-                vx, vy, vz = (p2.x - p1.x, p2.y - p1.y, p2.z - p1.z)
-                L2 = vx * vx + vy * vy + vz * vz
-                if L2 == 0.0:
+            vx, vy, vz = (p2.x - p1.x, p2.y - p1.y, p2.z - p1.z)
+            L2 = vx * vx + vy * vy + vz * vz
+            if L2 == 0.0:
+                continue
+
+            # Find internal nodes on the beam (excluding endpoints)
+            internal = []
+            for n in self.nodes:
+                if n is p1 or n is p2:
                     continue
+                if beam.is_point_on_beam(n):
+                    t = ((n.x - p1.x) * vx + (n.y - p1.y) * vy + (n.z - p1.z) * vz) / L2
+                    if 1e-12 < t < 1 - 1e-12:
+                        internal.append((t, n))
 
-                # Get internal nodes on the beam (excluding endpoints)
-                internal_nodes = []
-                for n in points_iter:
-                    if n is p1 or n is p2:
-                        continue
-                    if beam.is_point_on_beam(n):
-                        t = ((n.x - p1.x) * vx + (n.y - p1.y) * vy + (n.z - p1.z) * vz) / L2
-                        if 1e-12 < t < 1 - 1e-12:
-                            internal_nodes.append((t, n))
+            if not internal:
+                continue
 
-                if not internal_nodes:
-                    continue  # no internal nodes, skip
+            internal.sort(key=lambda tn: tn[0])
+            chain = [p1] + [n for _, n in internal] + [p2]
 
-                # Sort internal nodes by their parameter t along the beam
-                internal_nodes.sort(key=lambda tn: tn[0])
+            owners = list(getattr(beam, "cell_belongings", []) or [])
 
-                chain = [p1] + [n for _, n in internal_nodes] + [p2]
+            # create new beam segments
+            new_segments = []
+            for a, b in zip(chain[:-1], chain[1:]):
+                nb = Beam(a, b, beam.radius, beam.material, beam.type_beam, owners)
+                new_segments.append(nb)
 
-                # Create new beam segments
-                type_to_keep = beam.type_beam
-                beam_belongings = beam.cell_belongings
-                new_segments = []
-                for a, b in zip(chain[:-1], chain[1:]):
-                    new_segments.append(Beam(a, b, beam.radius, beam.material, type_to_keep, beam_belongings))
+            # mark old beam for removal
+            beams_to_remove.add(beam)
+            for c in owners:
+                per_cell_rem[c].add(beam)
 
-                beams_to_remove.add(beam)
-                for nb in new_segments:
-                    beams_to_add.add(nb)
+            for nb in new_segments:
+                beams_to_add_global.add(nb)
+                for c in owners:
+                    per_cell_add[c].add(nb)
+                    per_cell_pts[c].add(nb.point1)
+                    per_cell_pts[c].add(nb.point2)
 
-            if beams_to_remove:
-                for b in beams_to_remove:
-                    b.destroy()
-            if beams_to_add:
-                cell.add_beam(list(beams_to_add))
+        # Apply removals and additions per cell
+        for c in self.cells:
+            rem = per_cell_rem[c]
+            add = per_cell_add[c]
+            pts = per_cell_pts[c]
+            if rem:
+                c.remove_beam(rem)
+            if add:
+                c.add_beam(add)
+            if pts:
+                c.add_point(list(pts))
 
-            if hasattr(self, "beams"):
-                self.beams.difference_update(beams_to_remove)
-                self.beams.update(beams_to_add)
+        # Update global beams set
+        if beams_to_remove:
+            self.beams.difference_update(beams_to_remove)
+        if beams_to_add_global:
+            self.beams.update(beams_to_add_global)
 
-        self.define_beam_node_index()
+        # Refresh nodes and beams in lattice
         self._refresh_nodes_and_beams()
-
+        self.define_beam_node_index()
+        self.define_connected_beams_for_all_nodes()
 
     def get_node_coordinates_data(self) -> list[list[float]]:
         """

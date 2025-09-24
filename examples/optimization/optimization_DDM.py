@@ -10,7 +10,6 @@ path = "optimization/"
 # name_file = "optimization_DDM_surrogate"
 name_file = "Cantilever_L_beam"
 
-
 lattice_object = LatticeOpti(path + name_file, verbose=1, convergence_plotting = True)
 
 lattice_object.optimize_lattice()

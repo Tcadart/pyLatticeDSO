@@ -9,6 +9,7 @@ from sklearn.neighbors import NearestNeighbors
 from pyLattice.beam import Beam
 from pyLattice.cell import Cell
 from pyLattice.lattice import Lattice
+from pyLattice.plotting_lattice import LatticePlotting
 from pyLattice.utils import open_lattice_parameters
 from pyLatticeSim.greedy_algorithm import load_reduced_basis
 from pyLatticeSim.utils_rbf import ThinPlateSplineRBF
@@ -56,8 +57,9 @@ class LatticeSim(Lattice):
         self.is_penalized = False # True if the lattice has penalized beams at nodes
 
         self.define_connected_beams_for_all_nodes()
-        self.define_angles_between_beams()
-        self.set_penalized_beams()
+        if not self.domain_decomposition_solver or self.surrogate_model_implemented == "exact":
+            self.define_angles_between_beams()
+            self.set_penalized_beams()
         # Define global indexation
         self.define_node_index_boundary()
         self.define_node_local_tags()
@@ -139,10 +141,10 @@ class LatticeSim(Lattice):
             cell.add_point(points_to_add)
             cell.remove_beam(beams_to_remove)
 
-        self._refresh_nodes_and_beams()
         # Update index
         self.define_beam_node_index()
         self.is_penalized = True
+
 
     @timing.timeit
     def reset_penalized_beams(self) -> None:
@@ -1280,6 +1282,7 @@ class LatticeSim(Lattice):
         # IMPORTANT for hybrid cells: rebuild split segments created by geometry collisions
         if len(self.geom_types) > 1:
             self.check_hybrid_collision()
+            self._refresh_nodes_and_beams()
 
         # Refresh all data (after potential hybrid collision updates)
         self.define_beam_node_index()

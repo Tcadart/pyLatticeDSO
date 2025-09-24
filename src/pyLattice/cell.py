@@ -644,6 +644,7 @@ class Cell(object):
         from scipy.sparse import coo_matrix
         data, row, col = [], [], []
 
+        print(len(self.node_in_order_simulation), self.node_in_order_simulation)
         # Map boundary index
         for local_idx, point in enumerate(self.node_in_order_simulation):
             for i in range(6):
