@@ -10,7 +10,7 @@
       "y": 1,
       "z": 6
     },
-    "radii": [0.05, 0.05, 0.05],
+    "radii": [0.1, 0.1, 0.1],
     "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
   },
   "suplementary": {
@@ -61,7 +61,7 @@
   "optimization_informations": {
       "objective_function": "min",
       "objective_type": "compliance",
-      "max_iterations": 20,
+      "max_iterations": 50,
       "optimization_parameters": {
         "type": "unit_cell",
         "hybrid": false

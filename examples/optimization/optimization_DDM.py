@@ -8,7 +8,9 @@ from pyLattice.utils import save_JSON_to_Grasshopper, save_lattice_object
 
 path = "optimization/"
 # name_file = "optimization_DDM_surrogate"
-name_file = "Three_point_bending"
+# name_file = "Three_point_bending"
+name_file = "Cantilever_L_beam"
+# name_file = "Inversion_mechanism"
 
 lattice_object = LatticeOpti(path + name_file, verbose=1, convergence_plotting = True)
 
