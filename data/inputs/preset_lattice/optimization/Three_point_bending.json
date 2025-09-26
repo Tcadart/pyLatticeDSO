@@ -51,7 +51,7 @@
   "optimization_informations": {
       "objective_function": "min",
       "objective_type": "compliance",
-      "max_iterations": 50,
+      "max_iterations": 100,
       "optimization_parameters": {
         "type": "unit_cell",
         "hybrid": false

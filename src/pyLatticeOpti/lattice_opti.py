@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from statistics import mean
 from typing import TYPE_CHECKING
+import json
+from datetime import datetime
 
 import joblib
 import numpy as np
@@ -79,6 +81,16 @@ class LatticeOpti(LatticeSim):
         self.relative_density_poly_deriv = []
         self.parameter_optimization = []
 
+        self._history = {
+            "iteration": [],
+            "objective_norm": [],
+            "objective": [],
+            "relative_density": [],
+            "relative_density_error": [],
+            "parameters": [],
+            "timestamp": [],
+        }
+
         self._get_optimization_parameters(name_file)
         self._set_number_parameters_optimization()
 
@@ -96,6 +108,7 @@ class LatticeOpti(LatticeSim):
         self.plotting_objective.clear()
         self.plotting_densities.clear()
 
+        self._reset_optimization_history()
         self._initialize_optimization_solver()
         self._add_constraint_density()
         minimize_kwargs = dict(
@@ -115,6 +128,7 @@ class LatticeOpti(LatticeSim):
         if getattr(self, "enable_gradient_computing", False):
             minimize_kwargs["jac"] = self.gradient
 
+        self._record_iteration(self.initial_parameters)
         self.solution = minimize(**minimize_kwargs)
 
         if self._convergence_plotting and self.plotter is not None:
@@ -1454,6 +1468,107 @@ class LatticeOpti(LatticeSim):
                 self.plotter = OptimizationPlotter(self)
             self.plotter.update(self.actual_objective, r)
 
+        self._record_iteration(list(r))
+
+    def _reset_optimization_history(self) -> None:
+        """Clear the in-memory optimization history."""
+        self._history = {
+            "iteration": [],
+            "objective_norm": [],
+            "objective": [],
+            "relative_density": [],
+            "relative_density_error": [],
+            "parameters": [],
+            "timestamp": [],
+        }
+
+    def _record_iteration(self, r: list[float]) -> None:
+        """Append current iteration data to the history."""
+        try:
+            rho = self.get_relative_density()
+        except Exception:
+            rho = float("nan")
+        rho_err = (
+            rho - float(self.relative_density_objective)
+            if getattr(self, "relative_density_objective", None) is not None
+            else float("nan")
+        )
+        self._history["iteration"].append(int(self.iteration))
+        self._history["objective_norm"].append(
+            float(self.actual_objective) if self.actual_objective is not None else float("nan")
+        )
+        self._history["objective"].append(
+            float(self.denorm_objective) if self.denorm_objective is not None else float("nan")
+        )
+        self._history["relative_density"].append(float(rho))
+        self._history["relative_density_error"].append(float(rho_err))
+        self._history["parameters"].append([float(v) for v in r])
+        self._history["timestamp"].append(datetime.now().isoformat() + "Z")
+
+    def save_optimization_json(self, name_file: str) -> None:
+        """
+        Save optimization data (history + summary + useful metadata) to a JSON file.
+
+        Parameters
+        ----------
+        name_file : str
+            Name of the output JSON file (will be created in data/outputs/optimization_data_files/)
+        """
+        folder_path = Path(__file__).resolve().parents[2] / "data" / "outputs" / "optimization_data_files"
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        if name_file is None:
+            name_file = "optimization_summary_" + datetime.now().strftime("%Y%m%dT%H%M%S") + ".json"
+        elif not name_file.lower().endswith(".json"):
+            name_file += ".json"
+        folder_path /= name_file
+
+        # Constraints metadata (optional fields handled safely)
+        rel_dens_cfg = self.constraints_dict.get("relative_density", {}) if hasattr(self, "constraints_dict") else {}
+        rel_dens_target = rel_dens_cfg.get("value", None)
+
+        summary = {
+            "generated_at": datetime.now().isoformat() + "Z",
+            "name_file": getattr(self, "name_file", None) if hasattr(self, "name_file") else None,
+            "objective_type": self.objective_type,
+            "objective_function": self.objective_function,
+            "normalization_enabled": bool(self.enable_normalization),
+            "normalization_reference": float(self.initial_value_objective) if self.initial_value_objective else None,
+            "simulation_type": self._simulation_type,
+            "min_radius": float(self.min_radius),
+            "max_radius": float(self.max_radius),
+            "bounds": {
+                "lb": [float(v) for v in (self.bounds.lb if self.bounds is not None else [])],
+                "ub": [float(v) for v in (self.bounds.ub if self.bounds is not None else [])],
+            },
+            "relative_density_constraint": {
+                "mode": getattr(self, "relative_density_mode", None),
+                "target": float(rel_dens_target) if rel_dens_target is not None else None,
+                "tolerance": float(getattr(self, "relative_density_tolerance", 0.0)),
+            },
+            "optimizer": {
+                "method": "SLSQP",
+                "max_iterations": int(self.optim_max_iteration),
+                "ftol": float(self.optim_ftol),
+                "eps": float(self.optim_eps),
+                "disp": bool(self.optim_disp),
+            },
+            "solution": {
+                "success": bool(getattr(self.solution, "success", False)) if self.solution is not None else False,
+                "message": getattr(self.solution, "message", None) if self.solution is not None else None,
+                "nit": int(getattr(self.solution, "nit", self.iteration)),
+                "final_parameters": [float(v) for v in (self.solution.x if self.solution is not None else [])],
+                "final_objective_norm": float(self.actual_objective) if self.actual_objective is not None else None,
+                "final_objective": float(self.denorm_objective) if self.denorm_objective is not None else None,
+                "final_relative_density": float(self.get_relative_density()) if len(self.cells) > 0 else None,
+            },
+            "history": self._history,
+        }
+
+        with folder_path.open("w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+
+        print(f"Optimization summary saved to {folder_path}")
 
 
 
