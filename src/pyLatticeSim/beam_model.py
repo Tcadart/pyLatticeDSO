@@ -99,6 +99,7 @@ class BeamModel:
         self.domain, self.markers, self.facets, self.rad_tag_beam, self.tag_beam = (
             latticeMesh.mesh_lattice_cells(cell_index, save_mesh=False))
 
+
     @timing.timeit
     def define_radius(self, radius_dict: dict = None):
         """

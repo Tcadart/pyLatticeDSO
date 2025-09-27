@@ -400,6 +400,7 @@ class Lattice(object):
         """
         Define index at each beam and node
         """
+        self._refresh_nodes_and_beams()
         # Beams
         existing_beam_idx = [b.index for b in self.beams if getattr(b, "index", None) is not None]
         next_beam_idx = (max(existing_beam_idx) + 1) if existing_beam_idx else 0
@@ -640,8 +641,8 @@ class Lattice(object):
         """
         if not self.nodes:
             raise ValueError("No nodes in the lattice.")
-        xs = [n.x for n in self.nodes];
-        ys = [n.y for n in self.nodes];
+        xs = [n.x for n in self.nodes]
+        ys = [n.y for n in self.nodes]
         zs = [n.z for n in self.nodes]
         self.x_min, self.x_max = min(xs), max(xs)
         self.y_min, self.y_max = min(ys), max(ys)

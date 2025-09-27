@@ -95,7 +95,7 @@ def plot_convergence(data: dict,
     ax2 = ax.twinx()
 
     # Plot objective (left)
-    line_obj, = ax.plot(iters, y_obj, marker="o", linewidth=2, color="blue", label=obj_label)
+    line_obj, = ax.plot(iters, y_obj, linewidth=2, color="blue", label=obj_label)
     ax.set_xlabel("Iterations", fontsize=16)
     ax.set_ylabel(obj_label, fontsize=16, color=line_obj.get_color())
     ax.tick_params(axis="y", colors=line_obj.get_color(), labelsize =14)
@@ -103,9 +103,9 @@ def plot_convergence(data: dict,
 
     # Plot relative density (right)
     if rho:
-        line_rho, = ax2.plot(iters, rho, marker="s", linestyle="--", linewidth=2, color="green",
+        line_rho, = ax2.plot(iters, rho, linestyle="--", linewidth=2, color="green",
                              label="Relative density")
-        ax2.set_ylabel("Relative density", fontsize=16, color=line_rho.get_color())
+        ax2.set_ylabel(r"Relative density $\rho_{rel}$", fontsize=16, color=line_rho.get_color())
         ax2.tick_params(axis="y", colors=line_rho.get_color(), labelsize =14)
 
         # Optional: target band/line if present
@@ -142,9 +142,57 @@ def plot_convergence(data: dict,
     plt.close(fig)
     return out_path
 
+from datetime import datetime
+from pathlib import Path
+import json
+
+def extract_final_results(json_path: str | Path) -> tuple[float | None, float | None]:
+    """
+    Extract final compliance (non-normalized) and total computation time
+    from a saved optimization JSON.
+
+    Parameters
+    ----------
+    json_path : str | Path
+        Path to the optimization summary JSON.
+
+    Returns
+    -------
+    tuple (final_compliance, computation_time)
+        final_compliance : float | None
+            Final compliance (non-normalized), or None if missing.
+        computation_time : float | None
+            Total optimization time in seconds, or None if not computable.
+    """
+    p = Path(json_path)
+    with p.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    final_compliance = data.get("solution", {}).get("final_objective", None)
+
+    timestamps = data.get("history", {}).get("timestamp", [])
+    if len(timestamps) >= 2:
+        try:
+            t0 = datetime.fromisoformat(timestamps[0].replace("Z", ""))
+            t1 = datetime.fromisoformat(timestamps[-1].replace("Z", ""))
+            computation_time = (t1 - t0).total_seconds()
+        except Exception:
+            computation_time = None
+    else:
+        computation_time = None
+
+    return final_compliance, computation_time
+
+
+
 
 def main():
-    json_file = "data/outputs/optimization_data_files/Three_point_bending_optimized_expe.json"
+    # json_file = "data/outputs/optimization_data_files/Three_point_bending_optimized_expe.json"
+    json_file = "data/outputs/optimization_data_files/Three_point_bending_constant_expe.json"
+    # json_file = "data/outputs/optimization_data_files/Cantilever_L_beam_optimized_expe.json"
+    # json_file = "data/outputs/optimization_data_files/Cantilever_L_beam_constant_expe.json"
+    # json_file = "data/outputs/optimization_data_files/Inversion_mechanism_optimized_expe.json"
+    # json_file = "data/outputs/optimization_data_files/Inversion_mechanism_constant_expe.json"
     use_raw = False          # True = objectif non-normalisé, False = objectif normalisé
     save_path = "data/outputs/optimization_data_files/figures/"   # None pour ne pas sauvegarder
     show = True              # True pour afficher la figure
@@ -156,6 +204,9 @@ def main():
         save_path=save_path,
         show=show
     )
+    final_compliance, comp_time = extract_final_results(json_file)
+    print(f"Final compliance: {final_compliance}")
+    print(f"Total computation time (s): {comp_time}")
     if out:
         print(f"Figure saved to: {out}")
 

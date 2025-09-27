@@ -63,7 +63,7 @@
       "objective_type": "compliance",
       "max_iterations": 50,
       "optimization_parameters": {
-        "type": "unit_cell",
+        "type": "constant",
         "hybrid": false
       },
       "constraints": {

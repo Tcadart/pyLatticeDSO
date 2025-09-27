@@ -1,10 +1,11 @@
 """
 Main
 """
+from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
+from pyLatticeSim.lattice_sim import LatticeSim
 from src.pyLattice.plotting_lattice import LatticePlotting
 from src.pyLattice.lattice import Lattice
 
-from mesh_file.mesh_trimmer import MeshTrimmer
 from src.pyLattice.utils import save_JSON_to_Grasshopper
 from pyLatticeSim.utils_simulation import solve_FEM_FenicsX
 from pyLatticeSim.export_simulation_results import exportSimulationResults
@@ -15,8 +16,9 @@ mesh_trimmer = MeshTrimmer(name_mesh)
 mesh_trimmer.scale_mesh(1.5)
 # mesh_trimmer.plot_mesh(zoom = 3, camera_position=(8.7, -178.7))
 
+name_file = "design/"
 name_lattice = "Bone_cuted_hybrid"
-lattice_object = Lattice.from_json(name_lattice, mesh_trimmer)
+lattice_object = LatticeSim(name_file + name_lattice, mesh_trimmer)
 # lattice_object.cut_beam_with_mesh_trimmer()
 # lattice_object.print_statistics_lattice()
 

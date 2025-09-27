@@ -97,6 +97,7 @@ class latticeGeneration:
                             self._tag_point_index[tagAdd].append(point_id)
 
 
+
     @timingLG.timeit
     def generate_beams(self, cell_index = None):
         """

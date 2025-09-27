@@ -1537,10 +1537,6 @@ class LatticeOpti(LatticeSim):
             "simulation_type": self._simulation_type,
             "min_radius": float(self.min_radius),
             "max_radius": float(self.max_radius),
-            "bounds": {
-                "lb": [float(v) for v in (self.bounds.lb if self.bounds is not None else [])],
-                "ub": [float(v) for v in (self.bounds.ub if self.bounds is not None else [])],
-            },
             "relative_density_constraint": {
                 "mode": getattr(self, "relative_density_mode", None),
                 "target": float(rel_dens_target) if rel_dens_target is not None else None,
