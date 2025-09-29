@@ -3,7 +3,7 @@ Visualization and saving of lattice structures from lattice objects.
 
 Created in 2025-01-16 by Cadart Thomas, University of technology Belfort-Montbéliard.
 """
-from typing import Tuple
+from typing import Tuple, TYPE_CHECKING
 
 import numpy as np
 from matplotlib.lines import Line2D
@@ -14,6 +14,9 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 
 from .cell import Cell
+
+if TYPE_CHECKING:
+    from .lattice import Lattice
 
 from .utils import _get_beam_color, _prepare_lattice_plot_data, plot_coordinate_system, get_boundary_condition_color
 
@@ -494,12 +497,15 @@ class LatticePlotting:
         plt.legend()
         plt.show()
 
-    def subplot_lattice_geometries(self, cells: list["Cell"], latticeDimDict: dict, nbRadiusBins: int = 5,
-                                   explodeVoxel: float = 0.0):
+    # at the top of the file, you already have: from matplotlib import pyplot as plt
+
+    def subplot_lattice_geometries(self, lattice: "Lattice", explodeVoxel: float = 0.0):
         """
         Create subplots:
         - One subplot per geometry (radii index) with voxel visualization.
         """
+        cells = lattice.cells
+        latticeDimDict = lattice.lattice_dimension_dict
         rmin = 0
         rmax = 0.1
 
@@ -507,8 +513,15 @@ class LatticePlotting:
         dimRadius = len(cells[0].radii) if hasattr(cells[0].radii, '__len__') else 1
         fig, axs = plt.subplots(1, dimRadius, figsize=(5 * dimRadius, 5), subplot_kw={'projection': '3d'})
         axs = [axs] if dimRadius == 1 else axs  # Ensure axs is always iterable
+
+        # ---- Camera settings: view along +Y (use azim=-90 for -Y) ----
         for ax in axs:
             ax.set_axis_off()
+            # ax.view_init(elev=0, azim=-90)  # elev≈20° for depth; azim=90° => +Y direction
+            try:
+                ax.set_proj_type('ortho')  # optional: orthographic projection (matplotlib>=3.2)
+            except Exception:
+                pass
 
         for rad in range(dimRadius):
             ax = axs[rad]
@@ -519,12 +532,10 @@ class LatticePlotting:
                 # Get color based on the radii value for current geometry
                 radius = cell.radii
                 radius_value = radius[rad] if hasattr(radius, '__len__') else radius
-                import matplotlib.cm as cm  # ajouter en haut si pas encore fait
+                import matplotlib.cm as cm
 
-                # Define the colormap from blue to red
+                # Define the colormap and normalize
                 colormap = cm.get_cmap('coolwarm')
-
-                # Normalize radii between 0 and 1
                 radius_norm = (radius_value - rmin) / (rmax - rmin)
                 radius_norm = np.clip(radius_norm, 0.0, 1.0)
                 colorCell = colormap(radius_norm)
@@ -539,7 +550,7 @@ class LatticePlotting:
             if self.axisSet is False:
                 self._set_min_max_axis(latticeDimDict)
 
-            ax.set_title(f'Geometry {rad}')
+            # ax.set_title(f'Geometry {rad}')
             ax.set_xlim3d(self.minAxis, self.maxAxis)
             ax.set_ylim3d(self.minAxis, self.maxAxis)
             ax.set_zlim3d(self.minAxis, self.maxAxis)
@@ -547,7 +558,6 @@ class LatticePlotting:
 
         plt.tight_layout()
         plt.show()
-
 
     def show(self):
         """

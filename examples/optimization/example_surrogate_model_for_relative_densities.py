@@ -19,8 +19,10 @@ compute_relative_densities_dataset(hybrid_cell)
 # plot_3D_iso_surface(name_dataset="Test")
 # plot_3D_scatter(name_dataset="Test")
 
-evaluate_kriging_from_pickle(name_dataset="RelativeDensities_BCC", dataset_dir=None)
+name_cell = "Hybrid1_Hybrid4"
 
-evaluate_saved_kriging(name_dataset="RelativeDensities_BCC", dataset_dir=None, model_name="BCC",
+evaluate_kriging_from_pickle(name_dataset="RelativeDensities_" + name_cell, dataset_dir=None)
+
+evaluate_saved_kriging(name_dataset="RelativeDensities_" + name_cell, dataset_dir=None, model_name= name_cell,
                        save_parity_path=Path("data"))
 

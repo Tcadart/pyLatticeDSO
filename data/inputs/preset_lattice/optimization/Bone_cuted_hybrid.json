@@ -7,17 +7,19 @@
       },
     "number_of_cells": {
       "x": 10,
-      "y": 5,
-      "z": 5
+      "y": 10,
+      "z": 16
     },
-    "radii": [0.05,0.05, 0.05],
-    "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
+    "radii": [0.1,0.1,0.1],
+    "geom_types": [
+      "BCC","Hybrid1","Hybrid4"
+    ]
   },
-    "simulation_parameters": {
-      "enable" : true,
-      "material": "VeroClear",
-      "periodicity": true,
-      "DDM": {
+  "simulation_parameters": {
+    "enable" : true,
+    "material": "VeroClear",
+    "periodicity": false,
+    "DDM": {
         "enable_preconditioner": true,
         "max_iterations": 20,
         "schur_complement_computation": {
@@ -29,36 +31,37 @@
   "boundary_conditions": {
     "Displacement": {
       "Fixed" : {
-        "Surface": ["Xmax"],
-        "DOF": ["X"],
-        "Value": [0]
-      },
-      "SimpleSupport": {
-        "Surface": ["Xmin", "Zmin"],
-        "DOF": ["Y", "Z"],
-        "Value": [0, 0],
-        "SurfaceCells": ["Xmax", "Zmin"]
+        "Surface": ["Zmin"],
+        "DOF": ["X", "Y", "Z", "RX", "RY", "RZ"],
+        "Value": [0, 0, 0, 0, 0, 0]
       }
     },
     "Force": {
-      "Load": {
-        "Surface": ["Xmax", "Zmax"],
-        "DOF": ["Z"],
-        "Value": [-0.1]
+      "Load_1": {
+        "Surface": ["Zmax", "Ymin"],
+        "DOF": ["Y", "Z"],
+        "Value": [0.005, -0.01],
+        "SurfaceCells": ["Zmax", "Ymax"]
+      },
+      "Load_2": {
+        "Surface": ["Ymax", "Zmax"],
+        "DOF": ["X", "Y", "Z"],
+        "Value": [0.001, -0.002, -0.01],
+        "SurfaceCells": ["Zmax", "Ymax"]
       }
     }
   },
   "optimization_informations": {
       "objective_function": "min",
       "objective_type": "compliance",
-      "max_iterations": 250,
+      "max_iterations": 50,
       "optimization_parameters": {
         "type": "unit_cell",
         "hybrid": false
       },
       "constraints": {
         "relative_density": {
-          "value": 0.15
+          "value": 0.3
         }
       },
       "enable_parameter_normalization": true,

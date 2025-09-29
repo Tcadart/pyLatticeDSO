@@ -10,8 +10,8 @@
       "y": 5,
       "z": 5
     },
-    "radii": [0.05,0.05, 0.05],
-    "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
+    "radii": [0.05],
+    "geom_types": ["Hybrid4"]
   },
     "simulation_parameters": {
       "enable" : true,
@@ -37,21 +37,22 @@
         "Surface": ["Xmin", "Zmin"],
         "DOF": ["Y", "Z"],
         "Value": [0, 0],
-        "SurfaceCells": ["Xmax", "Zmin"]
+        "SurfaceCells": ["Zmin"]
       }
     },
     "Force": {
       "Load": {
         "Surface": ["Xmax", "Zmax"],
         "DOF": ["Z"],
-        "Value": [-0.1]
+        "Value": [-0.1],
+        "SurfaceCells": ["Xmax"]
       }
     }
   },
   "optimization_informations": {
       "objective_function": "min",
       "objective_type": "compliance",
-      "max_iterations": 250,
+      "max_iterations": 100,
       "optimization_parameters": {
         "type": "unit_cell",
         "hybrid": false

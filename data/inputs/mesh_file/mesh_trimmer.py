@@ -59,7 +59,7 @@ class MeshTrimmer:
             Name of the output mesh file.
             The file will be saved in STL format in the 'mesh_file' directory.
         """
-        project_root = Path(__file__).resolve().parents[1] / "data" / "inputs"
+        project_root = Path(__file__).resolve().parents[2] / "outputs" / "mesh_file"
         output_path = Path(output_name)
         if output_path.suffix != ".stl":
             output_path = output_path.with_suffix(".stl")
@@ -140,7 +140,7 @@ class MeshTrimmer:
         beams_to_remove = []
 
         for cell in cells:
-            for beam in cell.beams:
+            for beam in cell.beams_cell:
                 if not beam.beam_mod:
                     p1_inside = self.is_inside_mesh([beam.point1.x, beam.point1.y, beam.point1.z])
                     p2_inside = self.is_inside_mesh([beam.point2.x, beam.point2.y, beam.point2.z])
@@ -152,11 +152,11 @@ class MeshTrimmer:
                         # The Beam intersects the mesh, cut it
                         intersection_point = self.find_intersection_with_mesh(beam)
                         if intersection_point is not None:
-                            new_point = Point(intersection_point[0], intersection_point[1], intersection_point[2])
+                            new_point = Point(intersection_point[0], intersection_point[1], intersection_point[2], cell_belongings=[])
                             if not p1_inside:
-                                new_beam = Beam(new_point, beam.point2, beam.radius, beam.material, beam.type_beam, )
+                                new_beam = Beam(new_point, beam.point2, beam.radius, beam.material, beam.type_beam, cell_belongings=[])
                             else:
-                                new_beam = Beam(beam.point1, new_point, beam.radius, beam.material, beam.type_beam, )
+                                new_beam = Beam(beam.point1, new_point, beam.radius, beam.material, beam.type_beam, cell_belongings=[])
 
                             new_beams.append(new_beam)
                             beams_to_remove.append(beam)

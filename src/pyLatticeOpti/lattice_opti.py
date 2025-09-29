@@ -136,7 +136,7 @@ class LatticeOpti(LatticeSim):
                 self.plotter.update(self.actual_objective, self.solution.x)
             except Exception:
                 pass
-            self.plotter.finalize(block=True)
+            self.plotter.finalize(block=False)
 
         if self.solution.success:
             print("\n✅ Optimization succeeded!")
@@ -145,6 +145,7 @@ class LatticeOpti(LatticeSim):
                 print(f"Final compliance (non-normalized): {self.denorm_objective}")
         else:
             print("\n⚠️ Optimization failed!")
+            print("Optimal parameters:", self.solution.x)
             print(self.solution.message)
     def redefine_optim_parameters(self, max_iteration: int = None, ftol: float = None, disp: bool = None,
                                   eps: float = None) -> None:
