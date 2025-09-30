@@ -22,7 +22,10 @@ lattice_object.optimize_lattice()
 
 print("--- %s seconds ---" % (time.time() - start_time))
 
-lattice_object.reset_penalized_beams()
+vizualizer = LatticePlotting()
+vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", use_radius_grad_color=True)
+
+# lattice_object.reset_penalized_beams()
 
 # if name_file == "Three_point_bending":
 #     lattice_object.apply_symmetry(symmetry_plane="YZ", reference_point=(10,0,0))

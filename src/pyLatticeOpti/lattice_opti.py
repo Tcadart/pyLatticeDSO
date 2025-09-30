@@ -80,6 +80,12 @@ class LatticeOpti(LatticeSim):
         self.relative_density_poly = []
         self.relative_density_poly_deriv = []
         self.parameter_optimization = []
+        self._Lx = float(self.size_x)
+        self._Ly = float(self.size_y)
+        self._Lz = float(self.size_z)
+        self._x0 = 0.0
+        self._y0 = 0.0
+        self._z0 = 0.0
 
         self._history = {
             "iteration": [],
@@ -130,6 +136,7 @@ class LatticeOpti(LatticeSim):
 
         self._record_iteration(self.initial_parameters)
         self.solution = minimize(**minimize_kwargs)
+        self.set_optimization_parameters(self.solution.x)
 
         if self._convergence_plotting and self.plotter is not None:
             try:
@@ -145,8 +152,11 @@ class LatticeOpti(LatticeSim):
                 print(f"Final compliance (non-normalized): {self.denorm_objective}")
         else:
             print("\n⚠️ Optimization failed!")
-            print("Optimal parameters:", self.solution.x)
             print(self.solution.message)
+            print("Optimal parameters:", self.solution.x)
+            if self.objective_type == "compliance":
+                print(f"Final compliance (non-normalized): {self.denorm_objective}")
+
     def redefine_optim_parameters(self, max_iteration: int = None, ftol: float = None, disp: bool = None,
                                   eps: float = None) -> None:
         """
@@ -227,7 +237,19 @@ class LatticeOpti(LatticeSim):
         else:
             borneMin = self.min_radius
             borneMax = self.max_radius
-        self.bounds = Bounds(lb=[borneMin] * self.number_parameters, ub=[borneMax] * self.number_parameters)
+
+        if self.optimization_parameters["type"] == "linear":
+            # bornes : pentes dans [-1,1], intercept dans [0,1] (si normalization active)
+            if self.enable_normalization:
+                lb = [-1.0] * (self.number_parameters - 1) + [0.0]
+                ub = [1.0] * (self.number_parameters - 1) + [1.0]
+            else:
+                # si pas de normalisation globale, garde pentes [-1,1] (unitaires), intercept entre min_radius et max_radius
+                lb = [-1.0] * (self.number_parameters - 1) + [self.min_radius]
+                ub = [1.0] * (self.number_parameters - 1) + [self.max_radius]
+            self.bounds = Bounds(lb=lb, ub=ub)
+        else:
+            self.bounds = Bounds(lb=[borneMin] * self.number_parameters, ub=[borneMax] * self.number_parameters)
 
         initial_value = mean(self.normalize_optimization_parameters(self.radii))
         if self.optimization_parameters["type"] == "unit_cell":
@@ -235,8 +257,7 @@ class LatticeOpti(LatticeSim):
         elif self.optimization_parameters["type"] == "linear":
             if self.radius_field is None:
                 self._build_radius_field()
-            self.initial_parameters = [0.0] * (self.number_parameters - 1)
-            self.initial_parameters.append(1)
+            self.initial_parameters = [0.0] * (self.number_parameters - 1) + [initial_value]
         elif self.optimization_parameters["type"] == "constant":
             if self.optimization_parameters.get("hybrid", False):
                 self.initial_parameters = self.normalize_optimization_parameters(self.radii)
@@ -372,7 +393,12 @@ class LatticeOpti(LatticeSim):
         """
         print(Fore.LIGHTBLUE_EX + "Density constraint gradient function" + Fore.RESET)
         self.set_optimization_parameters(r)
-        gradDensConstraint = self.get_relative_density_gradient_kriging()
+        # gradDensConstraint = self.get_relative_density_gradient_kriging()
+
+        if self.optimization_parameters["type"] != "linear":
+            gradDensConstraint = self.get_relative_density_gradient_kriging()
+        else:
+            gradDensConstraint = self.finite_difference_density_gradient(r, eps=1e-2, scheme="central")
         print("Density constraint gradient: ", gradDensConstraint)
         # gradDensConstraint = gradDensConstraint/self.densConstraintInitial
         return gradDensConstraint
@@ -460,7 +486,6 @@ class LatticeOpti(LatticeSim):
 
             return grad
         elif self.optimization_parameters["type"] == "linear":
-            raise NotImplementedError("Gradient for linear optimization not implemented yet.")
             numberOfCells = len(self.cells)
             grad = np.zeros(self.number_parameters)
             dirs = self.optimization_parameters.get("direction", [])
@@ -520,6 +545,72 @@ class LatticeOpti(LatticeSim):
                 return np.array([g_total], dtype=float)
         else:
             raise ValueError("Invalid optimization parameters type.")
+
+    def finite_difference_density_gradient(self, r, eps: float = 1e-2, scheme: str = "central") -> np.ndarray:
+        """
+        Approximate the gradient of the density constraint g(θ) = ρ̄(θ) - ρ_target
+        with finite differences in the SAME parameter space as the optimizer (θ).
+        """
+        r = np.asarray(r, dtype=float).copy()
+        n = r.size
+        g = np.zeros_like(r)
+
+        def _clamp(val, i):
+            return float(min(self.bounds.ub[i], max(self.bounds.lb[i], val)))
+
+        f0 = None
+        if scheme in ("forward", "backward"):
+            f0 = float(self.density_constraint(r))
+
+        for i in range(n):
+            if scheme == "forward":
+                rp = r.copy()
+                rp[i] = _clamp(rp[i] + eps, i)
+                if rp[i] == r[i]:
+                    rm = r.copy()
+                    rm[i] = _clamp(rm[i] - eps, i)
+                    fm = float(self.density_constraint(rm))
+                    denom = r[i] - rm[i]
+                    g[i] = (f0 - fm) / max(denom, 1e-16)
+                else:
+                    fp = float(self.density_constraint(rp))
+                    denom = rp[i] - r[i]
+                    g[i] = (fp - f0) / max(denom, 1e-16)
+
+            elif scheme == "backward":
+                rm = r.copy()
+                rm[i] = _clamp(rm[i] - eps, i)
+                if rm[i] == r[i]:
+                    rp = r.copy()
+                    rp[i] = _clamp(rp[i] + eps, i)
+                    fp = float(self.density_constraint(rp))
+                    denom = rp[i] - r[i]
+                    g[i] = (fp - f0) / max(denom, 1e-16)
+                else:
+                    fm = float(self.density_constraint(rm))
+                    denom = r[i] - rm[i]
+                    g[i] = (f0 - fm) / max(denom, 1e-16)
+
+            else:  # central
+                rp = r.copy(); rm = r.copy()
+                rp[i] = _clamp(rp[i] + eps, i)
+                rm[i] = _clamp(rm[i] - eps, i)
+
+                if rp[i] == rm[i]:
+                    rp2 = r.copy()
+                    rp2[i] = _clamp(rp2[i] + eps, i)
+                    f0c = float(self.density_constraint(r))
+                    fp2 = float(self.density_constraint(rp2))
+                    denom = rp2[i] - r[i]
+                    g[i] = (fp2 - f0c) / max(denom, 1e-16)
+                else:
+                    fp = float(self.density_constraint(rp))
+                    fm = float(self.density_constraint(rm))
+                    denom = rp[i] - rm[i]
+                    g[i] = (fp - fm) / max(denom, 1e-16)
+
+        self.set_optimization_parameters(list(r))
+        return g
 
     def objective(self, r) -> float:
         """
@@ -766,19 +857,26 @@ class LatticeOpti(LatticeSim):
 
             # Build coefficients a, b, c mapped to x, y, z (missing ones = 0), and intercept d
             coeffs = {"x": 0.0, "y": 0.0, "z": 0.0}
-            for i, dkey in enumerate(dirs):
-                coeffs[dkey] = self.denormalize_optimization_parameters([float(optimization_parameters_actual[i])])[0]
-            d_intercept = self.denormalize_optimization_parameters([float(optimization_parameters_actual[-1])])[0]
+            slopes = {dkey: float(optimization_parameters_actual[i]) for i, dkey in enumerate(dirs)}
+            d_physical = self.denormalize_optimization_parameters([float(optimization_parameters_actual[-1])])[0]
 
+            span = (self.max_radius - self.min_radius)
 
-            # Evaluate f(x,y,z) = a*x + b*y + c*z + d at each cell center and set radius
             for cell in self.cells:
                 cx, cy, cz = cell.center_point
-                value = coeffs["x"] * cx + coeffs["y"] * cy + coeffs["z"] * cz + d_intercept
-                value = max(self.min_radius, min(self.max_radius, value))  # Clamp to min max
-                # Apply same scalar to all geom types for this cell
-                radius_vec = [float(value)] * len(self.geom_types)
-                cell.change_beam_radius(radius_vec)
+                # coords normalisées
+                xh = (cx - self._x0) / max(self._Lx, 1e-16)
+                yh = (cy - self._y0) / max(self._Ly, 1e-16)
+                zh = (cz - self._z0) / max(self._Lz, 1e-16)
+
+                s = 0.0
+                if "x" in dirs: s += slopes["x"] * xh
+                if "y" in dirs: s += slopes["y"] * yh
+                if "z" in dirs: s += slopes["z"] * zh
+
+                value = d_physical + span * s
+                value = max(self.min_radius, min(self.max_radius, value))
+                cell.change_beam_radius([float(value)] * len(self.geom_types))
         else:
             raise ValueError("Invalid optimization parameters type.")
 
@@ -1265,6 +1363,60 @@ class LatticeOpti(LatticeSim):
                         for dS in getattr(cell, "schur_complement_gradient", []):
                             total += float(u_cell @ (dS @ u_cell))
                     grad[0] = total
+            elif opt_type == "linear":
+                # Gradient w.r.t. linear field parameters θ = [a (for dirs...), intercept d]
+                # r_cell = a_x*x + a_y*y + a_z*z + d, shared by all geometries in a cell
+                dirs = self.optimization_parameters.get("direction", ["x", "y", "z"])
+                valid_dirs = {"x", "y", "z"}
+                if any(d not in valid_dirs for d in dirs):
+                    raise ValueError(f"Invalid direction in {dirs}; valid are 'x', 'y', 'z'.")
+
+                expected_n = len(dirs) + 1  # + intercept
+                if self.number_parameters != expected_n:
+                    raise ValueError(
+                        f"Mismatch in number of linear parameters: got {self.number_parameters}, expected {expected_n}."
+                    )
+
+                # Rebuild current (denormalized) coefficients to detect clamping activity
+                coeffs = {"x": 0.0, "y": 0.0, "z": 0.0}
+                for i, dkey in enumerate(dirs):
+                    coeffs[dkey] = self.denormalize_optimization_parameters(
+                        [float(self.actual_optimization_parameters[i])]
+                    )[0]
+                d_intercept = self.denormalize_optimization_parameters(
+                    [float(self.actual_optimization_parameters[-1])]
+                )[0]
+
+                tol = 1e-12  # small tolerance to decide if clamping is active
+
+                for cell in self.cells:
+                    if cell.node_in_order_simulation is None:
+                        cell.define_node_order_to_simulate()
+
+                    # Current displacement vector on the cell boundary (full local ordering)
+                    u_cell = np.array(
+                        cell.get_displacement_at_nodes(cell.node_in_order_simulation),
+                        dtype=float
+                    ).ravel()
+
+                    # Sensitivity dC/dr_cell = sum_j u^T (dS_j/dr) u
+                    dC_dr_cell = 0.0
+                    for dS in getattr(cell, "schur_complement_gradient", []):
+                        dC_dr_cell += float(u_cell @ (dS @ u_cell))
+
+                    # Chain rule to linear parameters (ignore contribution if clamped)
+                    cx, cy, cz = cell.center_point
+                    r_unclamped = coeffs["x"] * cx + coeffs["y"] * cy + coeffs["z"] * cz + d_intercept
+                    active = (self.min_radius + tol < r_unclamped < self.max_radius - tol)
+                    if not active:
+                        # When the radius is clamped at a bound, ∂r/∂θ ≈ 0 (no push outside the box)
+                        continue
+
+                    # Accumulate gradient for each coefficient in the order of 'dirs', then intercept
+                    for i, dkey in enumerate(dirs):
+                        axis_val = cx if dkey == "x" else cy if dkey == "y" else cz
+                        grad[i] += dC_dr_cell * axis_val
+                    grad[len(dirs)] += dC_dr_cell  # intercept contribution
             else:
                 raise NotImplementedError(f"Gradient for optimization type '{opt_type}' not implemented yet.")
             return grad

@@ -10,7 +10,7 @@
       "y": 5,
       "z": 5
     },
-    "radii": [0.05],
+    "radii": [0.03],
     "geom_types": ["Hybrid4"]
   },
     "simulation_parameters": {
@@ -52,9 +52,10 @@
   "optimization_informations": {
       "objective_function": "min",
       "objective_type": "compliance",
-      "max_iterations": 100,
+      "max_iterations": 10,
       "optimization_parameters": {
-        "type": "unit_cell",
+        "type": "linear",
+        "direction" : "x",
         "hybrid": false
       },
       "constraints": {
