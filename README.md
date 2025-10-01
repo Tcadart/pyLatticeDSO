@@ -1,4 +1,4 @@
 ![pyLattice_logo](/docs/pyLattice_logo.png)
 
-# pyLattice: Designing, Simulating, and Optimizing truss lattice structures
+# pyLattice: Design, Simulation, and Optimization for truss lattice structures
 
