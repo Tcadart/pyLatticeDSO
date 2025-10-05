@@ -77,6 +77,52 @@ class LatticeSim(Lattice):
             self.iteration = 0
             self.residuals = []
 
+    @classmethod
+    def open_pickle_lattice(cls, file_name: str = "LatticeObject", sim_config: str | None = None) -> "LatticeSim":
+        return super(LatticeSim, cls).open_pickle_lattice(file_name=file_name, sim_config=sim_config)
+
+    def _post_load_init(self, sim_config: str | None = None) -> None:
+        """Finalize a pickled Lattice upgraded to LatticeSim without regenerating geometry."""
+        self._simulation_flag = True
+        # sensible defaults
+        self.domain_decomposition_solver = getattr(self, "domain_decomposition_solver", False)
+        self.enable_periodicity = None
+        self.boundary_conditions = None
+        self.enable_simulation_properties = None
+        self.material_name = getattr(self, "material_name", None)
+        self.number_iteration_max = getattr(self, "number_iteration_max", None)
+        self.enable_preconditioner = getattr(self, "enable_preconditioner", None)
+        self.type_schur_complement_computation = getattr(self, "type_schur_complement_computation", "exact")
+        self.precision_greedy = getattr(self, "precision_greedy", None)
+        self.radial_basis_function = getattr(self, "radial_basis_function", None)
+        self.shape_schur_complement = getattr(self, "shape_schur_complement", None)
+        self._parameters_define = getattr(self, "_parameters_define", False)
+
+        # load simulation parameters from a JSON if provided
+        if sim_config is not None:
+            self.define_simulation_parameters(sim_config)
+            assert self.material_name is not None, "Material name_lattice must be defined for simulation properties."
+
+        # rebuild simulation-dependent structures
+        self.define_connected_beams_for_all_nodes()
+        if not self.domain_decomposition_solver or self.type_schur_complement_computation == "exact":
+            self.define_angles_between_beams()
+            self.set_penalized_beams()
+
+        self.define_node_index_boundary()
+        self.define_node_local_tags()
+        self.set_boundary_conditions()
+        self.are_cells_identical()
+
+        if self.domain_decomposition_solver:
+            if self.type_schur_complement_computation not in ["exact", "FE2"]:
+                self.reduce_basis_dict = load_reduced_basis(self, self.precision_greedy)
+                self.alpha_coefficients_greedy = self.reduce_basis_dict["alpha_ortho"].T
+            self.calculate_schur_complement_cells()
+            self.preconditioner = None
+            self.iteration = 0
+            self.residuals = []
+
     @timing.timeit
     def set_penalized_beams(self) -> None:
         """
@@ -1343,6 +1389,11 @@ class LatticeSim(Lattice):
                 seen.add(node)
 
         disp = np.asarray(disp_list, dtype=float)
-        force = np.sum(force_list, axis=0)  # total force on DOF
+
+        force_arr = np.asarray(force_list, dtype=float)
+
+        force = np.sum(abs(force_arr), axis=0)
+
         return disp, force
+
 

@@ -103,26 +103,15 @@ class Lattice(object):
             self.timing.summary()
 
     @classmethod
-    def open_pickle_lattice(cls, file_name: str = "LatticeObject") -> "Lattice":
+    def open_pickle_lattice(cls, file_name: str = "LatticeObject", sim_config: str | None = None) -> "Lattice":
         """
-        Load a lattice pickle from a file.
-
-        Parameters:
-        -----------
-        file_name: str
-            Name of the file to load (with or without the '.pkl' extension).
-        folder: str
-            Folder where the file is located.
-
-        Returns:
-        --------
-        Lattice
-            The loaded lattice object.
+        Load a lattice pickle and (optionally) upcast it to the caller's class (e.g., LatticeSim).
+        If the target class defines `_post_load_init`, it will be invoked after loading.
         """
         project_root = Path(__file__).resolve().parents[2]
         path = project_root / "data" / "outputs" / "saved_lattice_file" / file_name
         if path.suffix != ".pkl":
-            path = path.with_suffix('.pkl')
+            path = path.with_suffix(".pkl")
 
         if not os.path.exists(path):
             raise FileNotFoundError(f"The file {path} does not exist.")
@@ -133,7 +122,7 @@ class Lattice(object):
         except Exception as e:
             raise RuntimeError(f"Failed to load lattice from {path}: {e}")
 
-
+        # Normalize containers
         if isinstance(lattice.beams, list):
             lattice.beams = set(lattice.beams)
         if isinstance(lattice.nodes, list):
@@ -152,6 +141,15 @@ class Lattice(object):
                 n.connected_beams = set()
             elif isinstance(n.connected_beams, list):
                 n.connected_beams = set(n.connected_beams)
+
+        # --- upcast to the caller class if needed (e.g., LatticeSim) ---
+        if not isinstance(lattice, cls) and issubclass(cls, Lattice):
+            upgraded = cls.__new__(cls)  # type: ignore
+            upgraded.__dict__.update(lattice.__dict__)
+            lattice = upgraded
+            post = getattr(lattice, "_post_load_init", None)
+            if callable(post):
+                post(sim_config)
 
         print(f"Lattice loaded successfully from {path}")
         return lattice

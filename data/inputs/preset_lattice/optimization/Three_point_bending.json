@@ -10,8 +10,8 @@
       "y": 5,
       "z": 5
     },
-    "radii": [0.03, 0.03],
-    "geom_types": ["Hybrid1","Hybrid4"]
+    "radii": [0.02, 0.02, 0.02],
+    "geom_types": ["BCC","Hybrid1","Hybrid4"]
   },
     "simulation_parameters": {
       "enable" : true,
@@ -51,14 +51,15 @@
   "optimization_informations": {
       "objective_function": "min",
       "objective_type": "compliance",
-      "max_iterations": 25,
+      "max_iterations": 250,
       "optimization_parameters": {
         "type": "constant",
-        "hybrid": true
+        "direction": "x",
+        "hybrid": false
       },
       "constraints": {
         "relative_density": {
-          "value": 0.15
+          "value": 0.1883
         }
       },
       "enable_parameter_normalization": true,
