@@ -32,7 +32,7 @@
     "simulation_parameters": {
       "enable" : true,
       "material": "VeroClear",
-      "periodicity": true,
+      "periodicity": false,
       "DDM": {
         "enable_preconditioner": true,
         "max_iterations": 1000,

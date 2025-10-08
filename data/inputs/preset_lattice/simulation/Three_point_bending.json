@@ -1,17 +1,19 @@
 {
   "geometry": {
     "cell_size": {
-        "x": 10,
-        "y": 10,
-        "z": 10
+        "x": 1,
+        "y": 1,
+        "z": 1
       },
     "number_of_cells": {
       "x": 10,
       "y": 5,
       "z": 5
     },
-    "radii": [0.5, 0.5, 0.5],
-    "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
+    "radii": [0.05, 0.05, 0.05],
+    "geom_types": ["BCC", "Hybrid1", "Hybrid4"],
+    "enable_randomness": true,
+    "range_radius": [0.01, 0.1]
   },
     "simulation_parameters": {
       "enable" : true,
@@ -19,9 +21,9 @@
       "periodicity": true,
       "DDM": {
         "enable_preconditioner": true,
-        "max_iterations": 1000,
+        "max_iterations": 100000,
         "schur_complement_computation": {
-          "type": "nearest_neighbor",
+          "type": "exact",
           "precision_greedy": 1e-6
         }
       }

@@ -57,7 +57,9 @@ class LatticeSim(Lattice):
         self.is_penalized = False # True if the lattice has penalized beams at nodes
 
         self.define_connected_beams_for_all_nodes()
-        if not self.domain_decomposition_solver or self.surrogate_model_implemented == "exact":
+        print("enable_simulation_properties", self.enable_simulation_properties)
+        if self.enable_simulation_properties and (not self.domain_decomposition_solver or
+                                                  self.type_schur_complement_computation == "exact"):
             self.define_angles_between_beams()
             self.set_penalized_beams()
         # Define global indexation
@@ -123,6 +125,13 @@ class LatticeSim(Lattice):
             self.iteration = 0
             self.residuals = []
 
+    def _sorted_nodes(self, nodes, ndigits: int = 9):
+        """Deterministic ordering for any node iterable (kills randomness from set iteration)."""
+        return sorted(
+            nodes,
+            key=lambda n: (round(n.x, ndigits), round(n.y, ndigits), round(n.z, ndigits), getattr(n, "index", -1)),
+        )
+
     @timing.timeit
     def set_penalized_beams(self) -> None:
         """
@@ -134,11 +143,9 @@ class LatticeSim(Lattice):
             beams_to_remove = []
             beams_to_add = []
             points_to_add = []
-
             for beam in list(cell.beams_cell):
                 L1 = beam.angle_point_1.get("L_zone", 0)
                 L2 = beam.angle_point_2.get("L_zone", 0)
-
                 # No modification if both are zero or negative
                 if L1 <= 0 and L2 <= 0:
                     continue
@@ -190,6 +197,7 @@ class LatticeSim(Lattice):
         # Update index
         self.define_beam_node_index()
         self.is_penalized = True
+        print(Fore.GREEN + "Lattice penalization applied to beams at nodes." + Style.RESET_ALL)
 
 
     @timing.timeit
@@ -279,6 +287,7 @@ class LatticeSim(Lattice):
         self._refresh_nodes_and_beams()
         self.define_beam_node_index()
         self.is_penalized = False
+        print(Fore.GREEN + "Lattice penalization reverted." + Style.RESET_ALL)
 
     def define_simulation_parameters(self, name_file: str):
         """
@@ -499,7 +508,7 @@ class LatticeSim(Lattice):
         globalDisplacementIndex = []
         processed_nodes = set()
         for cell in self.cells:
-            for node in cell.points_cell:
+            for node in self._sorted_nodes(cell.points_cell):
                 if node.index_boundary is not None and node.index_boundary not in processed_nodes:
                     for i in range(6):
                         if node.fixed_DOF[i] == 0 and not OnlyImposed:
@@ -516,6 +525,7 @@ class LatticeSim(Lattice):
         if self._verbose > 2:
             print("globalDisplacement: ", globalDisplacement)
             print("global_displacement_index: ", globalDisplacementIndex)
+        globalDisplacement = np.array(globalDisplacement)
         return globalDisplacement, globalDisplacementIndex
 
     @timing.timeit
@@ -800,6 +810,7 @@ class LatticeSim(Lattice):
                     else:
                         raise NotImplementedError("Not implemented schur complement gradient computation method.")
 
+                # print(Fore.RED + "WARNING: Schur is not optimaly computed and stored, "  + Fore.RESET)
                 schur_cache[geom_key][radius_key] = {"S": S, "dS": dS_list}
                 if self._verbose > 1:
                     print(f"Schur complement + grads computed for geom {geom_key} with radii {radius_key}.")
@@ -1020,6 +1031,8 @@ class LatticeSim(Lattice):
         """
         Solve the problem with the domain decomposition method.
         """
+        import time
+        start_time = time.time()
         self._check_parameters_defined()
 
         # Free DOF
@@ -1066,7 +1079,7 @@ class LatticeSim(Lattice):
         xsol, info = conjugate_gradient_solver(A_operator, b, M = self.preconditioner, maxiter=self.number_iteration_max,
                                                tol = tol, mintol = mintol, restart_every = restart_every, alpha_max= alpha_max,
                                                callback=lambda xk: self.cg_progress(xk, b, A_operator))
-
+        print(f"Conjugate Gradient finished in {time.time() - start_time:.2f} seconds.")
         if self._verbose > -1:
             if info == 0:
                 print(Fore.GREEN + "Conjugate Gradient converged."+ Style.RESET_ALL)
@@ -1077,6 +1090,8 @@ class LatticeSim(Lattice):
 
         # Reset boundary conditions
         self.set_boundary_conditions()
+
+        xsol, globalDisplacementIndex = self.get_global_displacement()
         return xsol, info, self.global_displacement_index, b
 
     def calculate_reaction_force_global(self, globalDisplacement, rightHandSide:bool = False):

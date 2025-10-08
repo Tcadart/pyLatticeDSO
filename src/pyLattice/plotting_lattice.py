@@ -139,7 +139,8 @@ class LatticePlotting:
                 vmax = vmin + 1.0  # avoid degenerate norm
 
             cmap = plt.cm.jet
-            norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+            margin = -0.08 * (vmax - vmin)  # 5% margin at top and bottom
+            norm = mcolors.Normalize(vmin=vmin + margin, vmax=vmax - margin)
             smap = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
 
 

@@ -10,6 +10,7 @@ Created in 2023 by Cadart Thomas, University of technology Belfort Montbéliard.
 """
 import os
 import pickle
+import random
 from statistics import mean
 from typing import TYPE_CHECKING
 from collections import Counter
@@ -58,6 +59,8 @@ class Lattice(object):
         self.size_x, self.size_y, self.size_z = 0, 0, 0
         self.radii = None
         self.geom_types = None
+        self.enable_randomness = False
+        self.range_radius = None
         self.grad_dim, self.grad_radius, self.grad_mat = None, None, None
         self.symmetry_lattice = None
         self.uncertainty_node = None
@@ -162,6 +165,34 @@ class Lattice(object):
         string += f"radii: {self.radii}\n"
         return string
 
+    def __eq__(self, other: object) -> bool:
+        """
+        Compare two Lattice objects based on the radii of each cell.
+        Returns True if they have the same number of cells and identical radii values.
+        """
+        if not isinstance(other, Lattice):
+            return NotImplemented
+
+        # Different number of cells → not equal
+        if len(self.cells) != len(other.cells):
+            return False
+
+        # Compare per-cell radii (using cell index or position)
+        for c1, c2 in zip(self.cells, other.cells):
+            # Check if both have radii and same length
+            if not hasattr(c1, "radii") or not hasattr(c2, "radii"):
+                return False
+            if len(c1.radii) != len(c2.radii):
+                return False
+
+            # Compare numerical values (with small tolerance)
+            for r1, r2 in zip(c1.radii, c2.radii):
+                if abs(r1 - r2) > 1e-9:
+                    return False
+
+        return True
+
+    @timing.timeit
     def extract_parameters_from_json(self, name_file: str):
         """
         Extract lattice parameters from a JSON file and set the corresponding attributes.
@@ -186,6 +217,8 @@ class Lattice(object):
         self.num_cells_z = number_of_cells.get("z")
         self.radii = geometry.get("radii")
         self.geom_types = geometry.get("geom_types")
+        self.enable_randomness = geometry.get("enable_randomness", False)
+        self.range_radius = geometry.get("range_radius", [0.01, 0.1])
 
         if None in [self.cell_size_x, self.cell_size_y, self.cell_size_z,
                     self.num_cells_x, self.num_cells_y, self.num_cells_z,
@@ -261,6 +294,7 @@ class Lattice(object):
         self.define_gradient(grad_radius_property, grad_dim_property, grad_mat_property)
 
 
+    @timing.timeit
     def define_gradient(self, grad_radius_property, grad_dim_property, grad_mat_property):
         """
         Define gradient settings for radii, dimensions, and materials based on provided properties.
@@ -286,6 +320,7 @@ class Lattice(object):
         Generate cells in the lattice structure based on cell size, number of cells, geometry types, and radii.
         Gradient information and erased regions are also considered during cell generation.
         """
+        random.seed(44) # For reproducibility of randomness
         nx, ny, nz = self.num_cells_x, self.num_cells_y, self.num_cells_z
         csx, csy, csz = self.cell_size_x, self.cell_size_y, self.cell_size_z
         grad = self.grad_dim
@@ -318,9 +353,13 @@ class Lattice(object):
                         continue  # skip erased regions
 
                     pos_cell = [i, j, k]
+                    if self.enable_randomness:
+                        radii = [random.uniform(self.range_radius[0], self.range_radius[1]) for _ in self.radii]
+                    else:
+                        radii = self.radii
                     new_cell = Cell(
                         pos_cell, initial_cell_size, start_cell_pos,
-                        self.geom_types, self.radii,
+                        self.geom_types, radii,
                         self.grad_radius, self.grad_dim, self.grad_mat,
                         self.uncertainty_node, self._verbose,
                         beams_already_defined = added_beams,
@@ -344,6 +383,7 @@ class Lattice(object):
         self.face_tags = [[10, 15], [11, 14], [12, 13]]
         self.corner_tags = [[1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007]]
 
+    @timing.timeit
     def define_size_lattice(self):
         """
         Computes the size of the lattice along each direction.
@@ -399,6 +439,7 @@ class Lattice(object):
         Define index at each beam and node
         """
         self._refresh_nodes_and_beams()
+
         # Beams
         existing_beam_idx = [b.index for b in self.beams if getattr(b, "index", None) is not None]
         next_beam_idx = (max(existing_beam_idx) + 1) if existing_beam_idx else 0
@@ -427,6 +468,8 @@ class Lattice(object):
             if getattr(n, "index", None) is None:
                 n.index = next_node_idx
                 next_node_idx += 1
+
+
 
     @timing.timeit
     def define_cell_index(self) -> None:
@@ -652,6 +695,7 @@ class Lattice(object):
         }
         return self.lattice_dimension_dict
 
+    @timing.timeit
     def get_lattice_boundary_box(self) -> list[float]:
         """
         Get the boundary box of the lattice
@@ -659,19 +703,21 @@ class Lattice(object):
         return [self.x_min, self.x_max, self.y_min, self.y_max, self.z_min, self.z_max]
 
 
+    @timing.timeit
     def _refresh_nodes_and_beams(self) -> None:
         """
         Refresh the sets of nodes and beams in the lattice.
         This is useful after adding or removing cells to ensure
         that the lattice's nodes and beams accurately reflect its current state.
         """
-        self.refresh_cells_memberships()
         self.nodes = set()
         self.beams = set()
         for cell in self.cells:
             self.nodes.update(cell.points_cell)
             self.beams.update(cell.beams_cell)
+        # self.refresh_cells_memberships()
 
+    @timing.timeit
     def refresh_cells_memberships(self) -> None:
         """
         Public helper to refresh all cells' beams/points from the current global state.
@@ -680,6 +726,7 @@ class Lattice(object):
             if hasattr(c, "refresh_from_global"):
                 c.refresh_from_global(self)
 
+    @timing.timeit
     def remove_cell(self, index: int) -> None:
         """
         Removes a cell from the lattice
@@ -694,6 +741,7 @@ class Lattice(object):
         else:
             raise IndexError("Invalid cell index.")
 
+    @timing.timeit
     def find_minimum_beam_length(self) -> float:
         """
         Find minimum beam length
@@ -710,10 +758,12 @@ class Lattice(object):
                     minLength = beam.length
         return minLength
 
+    @timing.timeit
     def get_tag_list(self) -> list[int]:
         """Get the tag for all unique points in the lattice."""
         return [n.tag for n in self.nodes]
 
+    @timing.timeit
     def get_tag_list_boundary(self) -> list[int]:
         """Get the tag for boundary points in the lattice."""
         bbox = self.get_lattice_boundary_box()
@@ -740,6 +790,7 @@ class Lattice(object):
             for n in cell.points_cell:
                 n.tag = n.tag_point(local_box)
 
+    @timing.timeit
     def get_cell_occupancy_matrix(self):
         """
         Build a 3D matrix storing Cell objects (or None) at each (i, j, k).
@@ -757,6 +808,7 @@ class Lattice(object):
             self.occupancy_matrix[i, j, k] = cell
         return self.occupancy_matrix
 
+    @timing.timeit
     def get_cells_at_index(self, axis: str, index: int) -> list:
         """
         Get all cells at a specific index along a specified axis.
@@ -777,6 +829,7 @@ class Lattice(object):
         else:
             raise ValueError("Axis must be 'x', 'y', or 'z'")
 
+    @timing.timeit
     def get_relative_boundary_box(self, cell) -> list[float]:
         """
         Get the relative boundary box of a cell in the lattice.
@@ -819,6 +872,7 @@ class Lattice(object):
 
         return bbox
 
+    @timing.timeit
     def get_connected_node(self, node: "Point") -> list["Point"]:
         """
         Get all nodes connected to the input node with a beam
@@ -841,6 +895,7 @@ class Lattice(object):
                     connectedNode.append(beam.point1)
         return connectedNode
 
+    @timing.timeit
     def find_boundary_beams(self) -> list["Beam"]:
         """Find boundary beams and change the type_beam of beam"""
         bbox = self.get_lattice_boundary_box()
@@ -849,12 +904,14 @@ class Lattice(object):
             b.type_beam = 2
         return boundary
 
+    @timing.timeit
     def find_boundary_nodes(self) -> list["Point"]:
         """Find boundary nodes"""
         return [n for n in self.nodes if n.x in (self.x_min, self.x_max)
                 or n.y in (self.y_min, self.y_max)
                 or n.z in (self.z_min, self.z_max)]
 
+    @timing.timeit
     def get_name_lattice(self) -> str:
         """
         Determine the name_lattice of the lattice
@@ -873,64 +930,91 @@ class Lattice(object):
             self.name_lattice += "_Mod"
         return self.name_lattice
 
+    @timing.timeit
     def check_hybrid_collision(self) -> None:
         """
         Check if beam in hybrid configuration is cut by a point in the geometry
         Change the beam configuration of collisionned beams
         """
-        all_beams = list(self.beams)
-        beams_to_remove = set()
+        if not self.cells:
+            return
+
+        beams_to_remove_global = set()
         beams_to_add_global = set()
 
+        # Per–cell containers for in-place updates
         per_cell_rem = {c: set() for c in self.cells}
         per_cell_add = {c: set() for c in self.cells}
         per_cell_pts = {c: set() for c in self.cells}
 
-        for beam in all_beams:
-            p1, p2 = beam.point1, beam.point2
+        # Helper: quick AABB inclusion (with small tolerance)
+        def _in_aabb(p, aabb, tol=1e-12):
+            xmin, xmax, ymin, ymax, zmin, zmax = aabb
+            return (xmin - tol <= p.x <= xmax + tol and
+                    ymin - tol <= p.y <= ymax + tol and
+                    zmin - tol <= p.z <= zmax + tol)
 
-            vx, vy, vz = (p2.x - p1.x, p2.y - p1.y, p2.z - p1.z)
-            L2 = vx * vx + vy * vy + vz * vz
-            if L2 == 0.0:
+        # Build a lightweight per-cell point list (deterministic order)
+        def _sorted_pts(cell, nd=9):
+            return sorted(cell.points_cell,
+                          key=lambda n: (round(n.x, nd), round(n.y, nd), round(n.z, nd), getattr(n, "index", -1)))
+
+        for cell in self.cells:
+            # Candidates are only points from this cell
+            cell_points = _sorted_pts(cell)
+            if not cell_points or not cell.beams_cell:
                 continue
 
-            # Find internal nodes on the beam (excluding endpoints)
-            internal = []
-            for n in self.nodes:
-                if n is p1 or n is p2:
+            # Process each beam of the cell, but only if this cell is the primary owner
+            for beam in list(cell.beams_cell):
+                p1, p2 = beam.point1, beam.point2
+                vx, vy, vz = (p2.x - p1.x, p2.y - p1.y, p2.z - p1.z)
+                L2 = vx * vx + vy * vy + vz * vz
+                if L2 <= 0.0:
                     continue
-                if beam.is_point_on_beam(n):
-                    t = ((n.x - p1.x) * vx + (n.y - p1.y) * vy + (n.z - p1.z) * vz) / L2
-                    if 1e-12 < t < 1 - 1e-12:
-                        internal.append((t, n))
 
-            if not internal:
-                continue
+                # Tight AABB to skip most points quickly
+                aabb = (min(p1.x, p2.x), max(p1.x, p2.x),
+                        min(p1.y, p2.y), max(p1.y, p2.y),
+                        min(p1.z, p2.z), max(p1.z, p2.z))
 
-            internal.sort(key=lambda tn: tn[0])
-            chain = [p1] + [n for _, n in internal] + [p2]
+                internal = []
+                for n in cell_points:
+                    if n is p1 or n is p2:
+                        continue
+                    if not _in_aabb(n, aabb):
+                        continue
+                    # exact geometric test
+                    if beam.is_point_on_beam(n):
+                        t = ((n.x - p1.x) * vx + (n.y - p1.y) * vy + (n.z - p1.z) * vz) / L2
+                        if 1e-12 < t < 1.0 - 1e-12:
+                            internal.append((t, n))
 
-            owners = list(getattr(beam, "cell_belongings", []) or [])
+                if not internal:
+                    continue
 
-            # create new beam segments
-            new_segments = []
-            for a, b in zip(chain[:-1], chain[1:]):
-                nb = Beam(a, b, beam.radius, beam.material, beam.type_beam, owners)
-                new_segments.append(nb)
+                internal.sort(key=lambda tn: tn[0])
+                chain = [p1] + [n for _, n in internal] + [p2]
 
-            # mark old beam for removal
-            beams_to_remove.add(beam)
-            for c in owners:
-                per_cell_rem[c].add(beam)
+                # Create split segments; keep all owners if provided, else just this cell
+                seg_owners = list(getattr(beam, "cell_belongings", []) or [])
+                new_segments = []
+                for a, b in zip(chain[:-1], chain[1:]):
+                    nb = Beam(a, b, beam.radius, beam.material, beam.type_beam, seg_owners)
+                    new_segments.append(nb)
 
-            for nb in new_segments:
-                beams_to_add_global.add(nb)
-                for c in owners:
-                    per_cell_add[c].add(nb)
-                    per_cell_pts[c].add(nb.point1)
-                    per_cell_pts[c].add(nb.point2)
+                # Mark removals/additions per owner cell
+                beams_to_remove_global.add(beam)
+                for oc in seg_owners:
+                    per_cell_rem[oc].add(beam)
+                    for nb in new_segments:
+                        per_cell_add[oc].add(nb)
+                        per_cell_pts[oc].add(nb.point1)
+                        per_cell_pts[oc].add(nb.point2)
+                for nb in new_segments:
+                    beams_to_add_global.add(nb)
 
-        # Apply removals and additions per cell
+        # Apply per-cell edits
         for c in self.cells:
             rem = per_cell_rem[c]
             add = per_cell_add[c]
@@ -942,13 +1026,13 @@ class Lattice(object):
             if pts:
                 c.add_point(list(pts))
 
-        # Update global beams set
-        if beams_to_remove:
-            self.beams.difference_update(beams_to_remove)
+        # Update global sets
+        if beams_to_remove_global:
+            self.beams.difference_update(beams_to_remove_global)
         if beams_to_add_global:
             self.beams.update(beams_to_add_global)
 
-        # Refresh nodes and beams in lattice
+        # Refresh indices/connectivity once
         self._refresh_nodes_and_beams()
         self.define_beam_node_index()
         self.define_connected_beams_for_all_nodes()
@@ -1796,6 +1880,7 @@ class Lattice(object):
             return {'total': total, 'per_entity': details}
         return total
 
+    @timing.timeit
     def get_relative_density_mesh(self, solids_3d=None, domain_volume: float | None = None) -> float:
         """
         Compute relative density = V_solid / V_domain using exact CAD volumes.
@@ -1817,6 +1902,7 @@ class Lattice(object):
             raise ValueError("get_relative_density: domain volume must be positive.")
         return V_solid / V_domain
 
+    @timing.timeit
     def are_cells_identical(self) -> bool:
         """
         Check if all cells in the lattice are identical.

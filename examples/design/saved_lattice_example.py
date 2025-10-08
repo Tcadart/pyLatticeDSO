@@ -25,23 +25,30 @@ from pyLatticeSim.utils_simulation import solve_FEM_FenicsX
 # sim_config = "simulation/Inversion_mechanism"
 
 name_lattice = "Cantilever_L_beam_optimized_expe.json"
+# name_lattice = "Cantilever_L_beam_constant.json"
 sim_config = "simulation/Cantilever_L_beam"
+
+# name_lattice = "Three_point_bending_optimized_expe_plain"
+# sim_config = "simulation/Three_point_bending"
+
+
 
 lattice = LatticeSim.open_pickle_lattice(name_lattice, sim_config=sim_config)
 
-# vizualizer = LatticePlotting()
-# vizualizer.visualize_lattice(lattice, beam_color_type="radii", use_radius_grad_color=True,
-#                              deformedForm=True)
-
-
-sol, simulation_lattice = solve_FEM_FenicsX(lattice)
 
 # vizualizer = LatticePlotting()
 # vizualizer.visualize_lattice(lattice, beam_color_type="radii", use_radius_grad_color=True,
 #                              deformedForm=True)
 
 
-disp, force = lattice.get_global_force_displacement_curve(dof=0)  # Z direction
+# sol, simulation_lattice = solve_FEM_FenicsX(lattice)
+
+vizualizer = LatticePlotting()
+vizualizer.visualize_lattice(lattice, beam_color_type="radii", use_radius_grad_color=True,
+                             deformedForm=True)
+
+
+disp, force = lattice.get_global_force_displacement_curve(dof=2)  # Z direction
 print("Force:", force)
 
 
