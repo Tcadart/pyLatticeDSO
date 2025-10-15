@@ -26,9 +26,6 @@ def solve_FEM_FenicsX(lattice : "LatticeSim"):
     simulationModel: FullScaleLatticeSimulation
         The simulation model containing the results of the simulation.
     """
-    # lattice._initialize_displacement()
-    # lattice._initialize_reaction_force()
-
     start_time = time.time()
     # Generate the lattice model and mesh
     LatticeModel = BeamModel(MPI.COMM_SELF, lattice=lattice)

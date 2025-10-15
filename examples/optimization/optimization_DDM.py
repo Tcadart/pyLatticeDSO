@@ -25,8 +25,8 @@ lattice_object.optimize_lattice()
 
 print("--- %s seconds ---" % (time.time() - start_time))
 
-vizualizer = LatticePlotting()
-vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", use_radius_grad_color=True)
+# vizualizer = LatticePlotting()
+# vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", use_radius_grad_color=True)
 
 lattice_object.reset_penalized_beams()
 

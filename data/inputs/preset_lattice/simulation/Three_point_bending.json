@@ -13,7 +13,8 @@
     "radii": [0.05, 0.05, 0.05],
     "geom_types": ["BCC", "Hybrid1", "Hybrid4"],
     "enable_randomness": true,
-    "range_radius": [0.01, 0.1]
+    "range_radius": [0.01, 0.1],
+    "randomness_hybrid": false
   },
     "simulation_parameters": {
       "enable" : true,
@@ -21,9 +22,10 @@
       "periodicity": true,
       "DDM": {
         "enable_preconditioner": true,
+        "preconditioner_type": "mean",
         "max_iterations": 100000,
         "schur_complement_computation": {
-          "type": "exact",
+          "type": "nearest_neighbor",
           "precision_greedy": 1e-6
         }
       }

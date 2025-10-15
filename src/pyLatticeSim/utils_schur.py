@@ -103,7 +103,12 @@ def load_schur_complement_dataset(lattice_object: "LatticeSim", enable_normaliza
     data = np.load(file_name, allow_pickle=True)
     radius_values = data["radius_values"]
     schur_matrices = data["schur_matrices"]
-    schur_complement_dict = {tuple(radius): matrix for radius, matrix in zip(radius_values, schur_matrices)}
+
+    # Handle single or multiple entries
+    if np.ndim(radius_values[0]) == 0 or np.ndim(radius_values) == 1:
+        schur_complement_dict = {tuple(np.atleast_1d(radius_values)): schur_matrices}
+    else:
+        schur_complement_dict = {tuple(radius): matrix for radius, matrix in zip(radius_values, schur_matrices)}
 
     if enable_normalization:
         schur_complement_dict = normalize_schur_matrix(schur_complement_dict)

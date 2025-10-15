@@ -10,8 +10,8 @@
       "y": 5,
       "z": 5
     },
-    "radii": [0.02, 0.02, 0.02],
-    "geom_types": ["BCC","Hybrid1","Hybrid4"]
+    "radii": [0.05, 0.05, 0.05],
+    "geom_types": ["BCC","Hybrid1", "Hybrid4"]
   },
     "simulation_parameters": {
       "enable" : true,
@@ -19,7 +19,8 @@
       "periodicity": true,
       "DDM": {
         "enable_preconditioner": true,
-        "max_iterations": 20,
+        "preconditioner_type": "nearest_reference",
+        "max_iterations": 200,
         "schur_complement_computation": {
           "type": "RBF",
           "precision_greedy": 1e-6
@@ -53,13 +54,14 @@
       "objective_type": "compliance",
       "max_iterations": 250,
       "optimization_parameters": {
-        "type": "constant",
+        "type": "unit_cell",
         "direction": "x",
         "hybrid": false
       },
       "constraints": {
         "relative_density": {
-          "value": 0.1883
+          "value": 0.1883,
+          "compute_gradient": true
         }
       },
       "enable_parameter_normalization": true,

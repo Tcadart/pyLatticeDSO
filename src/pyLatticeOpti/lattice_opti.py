@@ -76,6 +76,7 @@ class LatticeOpti(LatticeSim):
         self.relative_density_mode = "upper" # "upper" or "lower"
         self.relative_density_tolerance = 0.0
         self.initial_relative_density_constraint = None
+        self.relative_density_direct_computation = False
         self.initial_continuity_constraint = None
         self.relative_density_poly = []
         self.relative_density_poly_deriv = []
@@ -147,15 +148,16 @@ class LatticeOpti(LatticeSim):
 
         if self.solution.success:
             print("\n✅ Optimization succeeded!")
-            print("Optimal parameters:", self.solution.x)
-            if self.objective_type == "compliance":
-                print(f"Final compliance (non-normalized): {self.denorm_objective}")
+
         else:
             print("\n⚠️ Optimization failed!")
             print(self.solution.message)
-            print("Optimal parameters:", self.solution.x)
-            if self.objective_type == "compliance":
-                print(f"Final compliance (non-normalized): {self.denorm_objective}")
+
+        final_params = self.denormalize_optimization_parameters(list(map(float, self.actual_optimization_parameters)))
+        print("Optimal parameters:", self.solution.x)
+        print("Denormalized optimal parameters:", final_params)
+        if self.objective_type == "compliance":
+            print(f"Final compliance (non-normalized): {self.denorm_objective}")
 
     def redefine_optim_parameters(self, max_iteration: int = None, ftol: float = None, disp: bool = None,
                                   eps: float = None) -> None:
@@ -337,6 +339,7 @@ class LatticeOpti(LatticeSim):
         self.relative_density_objective = self.constraints_dict.get("relative_density", {}).get("value", None)
         self.relative_density_mode = self.constraints_dict.get("relative_density", {}).get("mode", "upper")
         self.relative_density_tolerance = self.constraints_dict.get("relative_density", {}).get("tolerance", 0.0)
+        self.compute_gradient_relative_density = self.constraints_dict.get("relative_density", {}).get("compute_gradient", False)
 
         if self.relative_density_mode == "upper":
             lower_bound, upper_bound = -np.inf, 0.0  # rho - target <= 0
@@ -356,6 +359,8 @@ class LatticeOpti(LatticeSim):
         else:
             raise ValueError(f"Invalid relative density mode '{self.relative_density_mode}'. Choose 'upper', 'lower', 'eq', or 'band'.")
 
+        if self.compute_gradient_relative_density is False:
+            self.relative_density_direct_computation = True
         density_nl_constraint = NonlinearConstraint(
             fun=function,
             lb=lower_bound,
@@ -395,7 +400,7 @@ class LatticeOpti(LatticeSim):
         self.set_optimization_parameters(r)
         # gradDensConstraint = self.get_relative_density_gradient_kriging()
 
-        if self.optimization_parameters["type"] != "linear":
+        if self.optimization_parameters["type"] != "linear" and self.compute_gradient_relative_density:
             gradDensConstraint = self.get_relative_density_gradient_kriging()
         else:
             gradDensConstraint = self.finite_difference_density_gradient(r, eps=1e-2, scheme="central")
@@ -427,7 +432,13 @@ class LatticeOpti(LatticeSim):
         """
         cellRelDens = []
         for cell in self.cells:
-            if self._simulation_flag and self.kriging_model_relative_density is not None:
+            if self.relative_density_direct_computation:
+                relative_dens = self.generate_mesh_lattice_Gmsh(volume_computation=True, cut_mesh_at_boundary=True,
+                                                     save_STL=False, only_relative_density=True,
+                                                     cell_index=cell.index)
+                print(f"Cell {cell.index} relative density (direct computation): {relative_dens}")
+                cellRelDens.append(relative_dens)
+            elif self._simulation_flag and self.kriging_model_relative_density is not None:
                 cellRelDens.append(cell.get_relative_density_kriging(self.kriging_model_relative_density))
             else:
                 cellRelDens.append(cell.relative_density)

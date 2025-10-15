@@ -9,22 +9,22 @@ from pyLattice.plotting_lattice import LatticePlotting
 from pyLatticeSim.utils_simulation import solve_FEM_FenicsX
 
 path = "simulation/"
-name_file = "Cantilever_L_beam"
-# name_file = "Three_point_bending"
+# name_file = "Cantilever_L_beam"
+name_file = "Three_point_bending"
 # name_file = "Inversion_mechanism"
 
 
-start_time85 = time.time()
-lattice_Sim_object = LatticeSim(path + name_file, verbose = 1)
-print("Lattice generation time --- %s seconds ---" % (time.time() - start_time85))
+# start_time85 = time.time()
+# lattice_Sim_object = LatticeSim(path + name_file, verbose = 1)
+# print("Lattice generation time --- %s seconds ---" % (time.time() - start_time85))
 
 # vizualizer = LatticePlotting()
 # vizualizer.visualize_lattice(lattice_Sim_object, beam_color_type="radii",
 #                              use_radius_grad_color=True)
 
-sol_FEM = solve_FEM_FenicsX(lattice_Sim_object)[0]
-print("FEM simulation time --- %s seconds ---" % (time.time() - start_time85))
-
+# sol_FEM = solve_FEM_FenicsX(lattice_Sim_object)[0]
+# print("FEM simulation time --- %s seconds ---" % (time.time() - start_time85))
+#
 # np.save("sol_array.npy", sol_FEM)
 
 
@@ -43,7 +43,7 @@ print("FEM simulation time --- %s seconds ---" % (time.time() - start_time85))
 #                              enable_boundary_conditions=True,
 #                              deformedForm=True)
 
-# sol_FEM = np.load("sol_array.npy")
+sol_FEM = np.load("sol_array.npy")
 start_time85 = time.time()
 lattice_object = LatticeSim(path + name_file, enable_domain_decomposition_solver = True, verbose=1)
 print("Lattice generation time --- %s seconds ---" % (time.time() - start_time85))
@@ -55,7 +55,7 @@ print("DDM simulation time --- %s seconds ---" % (time.time() - start_time85))
 relative_error = np.linalg.norm(sol_FEM - sol_DDM) / np.linalg.norm(sol_FEM)
 print("Relative error between FEM and DDM", relative_error)
 
-np.save("ddm_array.npy", sol_DDM)
+# np.save("ddm_array.npy", sol_DDM)
 
 
 # vizualizer = LatticePlotting()

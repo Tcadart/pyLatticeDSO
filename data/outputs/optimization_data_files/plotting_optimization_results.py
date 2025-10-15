@@ -103,7 +103,7 @@ def plot_convergence(data: dict,
 
     # Plot relative density (right)
     if rho:
-        line_rho, = ax2.plot(iters, rho, linestyle="--", linewidth=2, color="green",
+        line_rho, = ax2.plot(iters[1:], rho[1:], linestyle="--", linewidth=2, color="green",
                              label="Relative density")
         ax2.set_ylabel(r"Relative density $\rho_{rel}$", fontsize=16, color=line_rho.get_color())
         ax2.tick_params(axis="y", colors=line_rho.get_color(), labelsize =14)
@@ -125,6 +125,9 @@ def plot_convergence(data: dict,
         sim = data.get("simulation_type", "")
         title = f"Convergence ({otype}, {sim})".strip(", ")
     # ax.set_title(title)
+    # Grid (main x-axis and left y-axis)
+    ax.grid(True, which="major", linestyle="--", linewidth=0.8, alpha=0.6)
+    ax2.grid(False)  # avoid duplicated grid lines on twin axis
     fig.tight_layout()
 
     # Save or show
@@ -188,8 +191,9 @@ def extract_final_results(json_path: str | Path) -> tuple[float | None, float | 
 
 def main():
     # json_file = "data/outputs/optimization_data_files/Three_point_bending_optimized_expe.json"
-    json_file = "data/outputs/optimization_data_files/Three_point_bending_constant_expe.json"
-    # json_file = "data/outputs/optimization_data_files/Cantilever_L_beam_optimized_expe.json"
+    # json_file = "data/outputs/optimization_data_files/Three_point_bending_optimized.json"
+    # json_file = "data/outputs/optimization_data_files/Three_point_bending_constant_expe.json"
+    json_file = "data/outputs/optimization_data_files/Cantilever_L_beam_optimized_expe.json"
     # json_file = "data/outputs/optimization_data_files/Cantilever_L_beam_constant_expe.json"
     # json_file = "data/outputs/optimization_data_files/Inversion_mechanism_optimized_expe.json"
     # json_file = "data/outputs/optimization_data_files/Inversion_mechanism_constant_expe.json"

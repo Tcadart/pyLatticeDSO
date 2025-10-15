@@ -19,7 +19,8 @@
       "periodicity": true,
       "DDM": {
         "enable_preconditioner": true,
-        "max_iterations": 100,
+        "preconditioner_type": "nearest_reference",
+        "max_iterations": 200,
         "schur_complement_computation": {
           "type": "RBF",
           "precision_greedy": 1e-6
@@ -59,11 +60,12 @@
       "constraints": {
         "relative_density": {
           "value": 0.3,
-          "mode": "eq"
+          "mode": "eq",
+          "compute_gradient": true
         }
       },
       "enable_parameter_normalization": true,
       "simulation_type": "DDM",
-      "enable_gradient_computing": true
+      "enable_gradient_computing": false
   }
 }

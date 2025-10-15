@@ -1,4 +1,5 @@
 from math import sqrt
+from pathlib import Path
 from typing import TYPE_CHECKING
 import numpy as np
 from colorama import Fore, Style
@@ -13,7 +14,7 @@ from pyLattice.plotting_lattice import LatticePlotting
 from pyLattice.utils import open_lattice_parameters
 from pyLatticeSim.greedy_algorithm import load_reduced_basis
 from pyLatticeSim.utils_rbf import ThinPlateSplineRBF
-from pyLatticeSim.utils_schur import get_schur_complement
+from pyLatticeSim.utils_schur import get_schur_complement, load_schur_complement_dataset
 from pyLatticeSim.conjugate_gradient_solver import conjugate_gradient_solver
 from pyLatticeSim.utils_simulation import solve_FEM_cell
 
@@ -38,6 +39,8 @@ class LatticeSim(Lattice):
         self.material_name = None
         self.number_iteration_max = None
         self.enable_preconditioner = None
+        self.preconditioner_type = None
+        self.used_schur_preconditioner = None
         self.type_schur_complement_computation = None
         self.precision_greedy: float | None = None
         self.radial_basis_function = None
@@ -55,9 +58,9 @@ class LatticeSim(Lattice):
         self.surrogate_model_implemented = ["exact", "FE2", "nearest_neighbor", "linear", "RBF"]
         self.enable_gradient_computing = False # Enable gradient computing for optimization
         self.is_penalized = False # True if the lattice has penalized beams at nodes
+        self.neigh_function = None # Nearest neighbor function for nearest neighbor surrogate model
 
         self.define_connected_beams_for_all_nodes()
-        print("enable_simulation_properties", self.enable_simulation_properties)
         if self.enable_simulation_properties and (not self.domain_decomposition_solver or
                                                   self.type_schur_complement_computation == "exact"):
             self.define_angles_between_beams()
@@ -72,6 +75,12 @@ class LatticeSim(Lattice):
             if not self.type_schur_complement_computation in ["exact", "FE2"]:
                 self.reduce_basis_dict = load_reduced_basis(self, self.precision_greedy)
                 self.alpha_coefficients_greedy = self.reduce_basis_dict["alpha_ortho"].T
+                if self.type_schur_complement_computation == "nearest_neighbor":
+                    self.neigh_function = NearestNeighbors(n_neighbors=1, algorithm='auto')
+                    self.neigh_function.fit(self.reduce_basis_dict["list_elements"])
+
+            if self.enable_preconditioner:
+                self._define_preconditioner_approximation()
 
             self.calculate_schur_complement_cells()
 
@@ -94,6 +103,7 @@ class LatticeSim(Lattice):
         self.material_name = getattr(self, "material_name", None)
         self.number_iteration_max = getattr(self, "number_iteration_max", None)
         self.enable_preconditioner = getattr(self, "enable_preconditioner", None)
+        self.preconditioner_type = getattr(self, "preconditioner_type", None)
         self.type_schur_complement_computation = getattr(self, "type_schur_complement_computation", "exact")
         self.precision_greedy = getattr(self, "precision_greedy", None)
         self.radial_basis_function = getattr(self, "radial_basis_function", None)
@@ -307,6 +317,9 @@ class LatticeSim(Lattice):
         DDM_parameters = sim_params.get("DDM", None)
         if DDM_parameters is not None:
             self.enable_preconditioner = DDM_parameters.get("enable_preconditioner", False)
+            self.preconditioner_type = DDM_parameters.get("preconditioner_type", None)
+            if self.preconditioner_type is None and self.enable_preconditioner:
+                raise ValueError("Preconditioner type must be defined in the input file.")
             self.number_iteration_max = DDM_parameters.get("max_iterations", 1000)
             if self.enable_preconditioner is not None and self.number_iteration_max is not None:
                 self._parameters_define = True
@@ -776,50 +789,188 @@ class LatticeSim(Lattice):
                 surface_cells = data.get("SurfaceCells", None)
                 self.apply_constraints_nodes(data["Surface"], data["Value"], numeric_DOFs, key, surface_cells)
 
+    # def calculate_schur_complement_cells(self):
+    #     """
+    #     Calculate the Schur complement for each cell in the lattice.
+    #     Save the result in the cell.schur_complement attribute.
+    #     """
+    #     schur_cache: dict = {}
+    #     nb_computed = 0
+    #     for cell in self.cells:
+    #         geom_key = tuple(cell.geom_types) if isinstance(cell.geom_types, list) else cell.geom_types
+    #         radius_key = tuple(round(float(r), 8) for r in cell.radii)
+    #
+    #         if geom_key not in schur_cache:
+    #             schur_cache[geom_key] = {}
+    #
+    #
+    #         if radius_key not in schur_cache[geom_key]:
+    #             nb_computed += 1
+    #             # Base Schur complement
+    #             if self.type_schur_complement_computation in ["exact", "FE2"]:
+    #                 S = get_schur_complement(self, cell.index)
+    #             elif self.type_schur_complement_computation in self.surrogate_model_implemented:
+    #                 S = self.get_schur_complement_from_reduced_basis(list(radius_key))
+    #             else:
+    #                 raise NotImplementedError("Not implemented schur complement computation method.")
+    #
+    #             dS_list = None
+    #             if self.enable_gradient_computing:
+    #                 if self.type_schur_complement_computation != "RBF":
+    #                     # Derivatives w.r.t. radii (finite-difference, central)
+    #                     dS_list = self._compute_schur_gradients(cell, list(radius_key))
+    #                 elif self.type_schur_complement_computation == "RBF":
+    #                     # Derivatives w.r.t. radii (via RBF gradients)
+    #                     dS_list = self._compute_schur_gradients_RBF(list(radius_key))
+    #                 else:
+    #                     raise NotImplementedError("Not implemented schur complement gradient computation method.")
+    #
+    #             # print(Fore.RED + "WARNING: Schur is not optimaly computed and stored, "  + Fore.RESET)
+    #             schur_cache[geom_key][radius_key] = {"S": S, "dS": dS_list}
+    #             if self._verbose > 1:
+    #                 print(f"Schur complement + grads computed for geom {geom_key} with radii {radius_key}.")
+    #         else:
+    #             S = schur_cache[geom_key][radius_key]["S"]
+    #             dS_list = schur_cache[geom_key][radius_key]["dS"]
+    #
+    #         cell.schur_complement = S
+    #         cell.schur_complement_gradient = dS_list
+    #     if self._verbose > 0:
+    #         print("Number of unique Schur complements computed:", nb_computed)
+
     def calculate_schur_complement_cells(self):
         """
         Calculate the Schur complement for each cell in the lattice.
-        Save the result in the cell.schur_complement attribute.
+        Batch all unique radius cases per geometry and compute them at once.
         """
         schur_cache: dict = {}
+        nb_computed = 0
 
+        # 1) Group cells by (geom_key, radius_key)
+        groups: dict = {}
         for cell in self.cells:
             geom_key = tuple(cell.geom_types) if isinstance(cell.geom_types, list) else cell.geom_types
             radius_key = tuple(round(float(r), 8) for r in cell.radii)
 
+            if geom_key not in groups:
+                groups[geom_key] = {}
+            groups[geom_key].setdefault(radius_key, []).append(cell)
+
+        # 2) For each geometry, batch-compute missing Schur complements
+        for geom_key, radius_map in groups.items():
             if geom_key not in schur_cache:
                 schur_cache[geom_key] = {}
 
-            if radius_key not in schur_cache[geom_key]:
-                # Base Schur complement
+            # Find which radius sets are not cached yet
+            missing_keys = [rk for rk in radius_map.keys() if rk not in schur_cache[geom_key]]
+            if missing_keys:
+                # Compute missing Schur complements
                 if self.type_schur_complement_computation in ["exact", "FE2"]:
-                    S = get_schur_complement(self, cell.index)
+                    # No batch available -> compute one by one
+                    for rk in missing_keys:
+                        nb_computed += 1
+                        # Using the first cell with this (geom, radii) to get index
+                        ref_cell = radius_map[rk][0]
+                        S = get_schur_complement(self, ref_cell.index)
+                        dS_list = None
+                        if self.enable_gradient_computing:
+                            dS_list = self._compute_schur_gradients(ref_cell, list(rk))
+                        schur_cache[geom_key][rk] = {"S": S, "dS": dS_list}
+                        if self._verbose > 1:
+                            print(
+                                f"Schur complement (+ grads) computed (exact/FE2) for geom {geom_key} with radii {rk}.")
                 elif self.type_schur_complement_computation in self.surrogate_model_implemented:
-                    S = self.get_schur_complement_from_reduced_basis(list(radius_key))
+                    # Batch surrogate evaluation per geometry
+                    nb_computed += len(missing_keys)
+                    radii_batch = [list(rk) for rk in missing_keys]
+                    S_batch = self.get_schur_complement_from_reduced_basis_batch(radii_batch)  # (n_q, n, n)
+
+                    for rk, S in zip(missing_keys, S_batch):
+                        dS_list = None
+                        if self.enable_gradient_computing:
+                            if self.type_schur_complement_computation == "RBF":
+                                dS_list = self._compute_schur_gradients_RBF(list(rk))
+                            else:
+                                # fallback FD for other surrogates
+                                ref_cell = radius_map[rk][0]
+                                dS_list = self._compute_schur_gradients(ref_cell, list(rk))
+
+                        schur_cache[geom_key][rk] = {"S": S, "dS": dS_list}
+                        if self._verbose > 1:
+                            print(
+                                f"Schur complement (+ grads) computed (batch surrogate) for geom {geom_key} with radii {rk}.")
                 else:
                     raise NotImplementedError("Not implemented schur complement computation method.")
 
-                dS_list = None
-                if self.enable_gradient_computing:
-                    if self.type_schur_complement_computation != "RBF":
-                        # Derivatives w.r.t. radii (finite-difference, central)
-                        dS_list = self._compute_schur_gradients(cell, list(radius_key))
-                    elif self.type_schur_complement_computation == "RBF":
-                        # Derivatives w.r.t. radii (via RBF gradients)
-                        dS_list = self._compute_schur_gradients_RBF(list(radius_key))
-                    else:
-                        raise NotImplementedError("Not implemented schur complement gradient computation method.")
+            # 3) Assign cached results to all cells
+            for rk, cells in radius_map.items():
+                S = schur_cache[geom_key][rk]["S"]
+                dS_list = schur_cache[geom_key][rk]["dS"]
+                for c in cells:
+                    c.schur_complement = S
+                    c.schur_complement_gradient = dS_list
 
-                # print(Fore.RED + "WARNING: Schur is not optimaly computed and stored, "  + Fore.RESET)
-                schur_cache[geom_key][radius_key] = {"S": S, "dS": dS_list}
-                if self._verbose > 1:
-                    print(f"Schur complement + grads computed for geom {geom_key} with radii {radius_key}.")
-            else:
-                S = schur_cache[geom_key][radius_key]["S"]
-                dS_list = schur_cache[geom_key][radius_key]["dS"]
+        if self._verbose > 1:
+            print("Number of unique Schur complements computed:", nb_computed)
 
-            cell.schur_complement = S
-            cell.schur_complement_gradient = dS_list
+    def get_schur_complement_from_reduced_basis_batch(self, geometric_params_list: list[list[float]]) -> np.ndarray:
+        """
+        Vectorized version: compute Schur complements for many queries in one GEMM (faster than many GEMVs).
+
+        Parameters
+        ----------
+        geometric_params_list : list of list of float
+            Each inner list is a set of geometric parameters for one query.
+
+        Returns
+        -------
+        schur_batch : np.ndarray
+            Array of shape (n_queries, n_schur, n_schur) with Fortran-ordered per-matrix layout.
+        """
+        # 1) Build all alpha vectors and stack them as columns -> (n_alpha, n_queries)
+        alphas_list = []
+        t = self.type_schur_complement_computation
+
+        if t == "nearest_neighbor":
+            Xq = np.asarray(geometric_params_list, dtype=float)
+            _, indices = self.neigh_function.kneighbors(Xq)
+            alphas_list = [self.alpha_coefficients_greedy[i0] for i0 in indices[:, 0]]
+
+        elif t == "linear":
+            alphas_list = [self.evaluate_alphas_linear_surrogate(gp) for gp in geometric_params_list]
+
+        elif t == "RBF":
+            if self.radial_basis_function is None:
+                self._define_radial_basis_functions()
+            Xq = np.asarray(geometric_params_list, dtype=float)
+            alphas_list = self.radial_basis_function.evaluate(Xq).squeeze()
+            if alphas_list.ndim == 1:
+                alphas_list = alphas_list[None, :]  # (1, n_queries) if degenerate
+
+            # convert to list of 1D arrays for consistency below
+            alphas_list = [alphas_list[i, :] for i in range(alphas_list.shape[0])]
+
+        else:
+            raise NotImplementedError("Not implemented schur complement computation method.")
+
+        A = np.column_stack([np.asarray(a, dtype=float) for a in alphas_list])  # (n_alpha, n_queries)
+
+        # 2) Single GEMM: (n_schur^2, n_alpha) @ (n_alpha, n_queries) -> (n_schur^2, n_queries)
+        basis = self.reduce_basis_dict["basis_reduced_ortho"]
+        basisF = np.asfortranarray(basis)  # BLAS-friendly
+        S_flat = basisF @ A  # GEMM, fast path
+
+        # 3) Reshape each column to (n_schur, n_schur) with Fortran order
+        if self.shape_schur_complement is None:
+            self.shape_schur_complement = int(sqrt(S_flat.shape[0]))
+        n = self.shape_schur_complement
+        n_q = S_flat.shape[1]
+
+        schur_batch = np.empty((n_q, n, n), dtype=S_flat.dtype, order="C")
+        for j in range(n_q):
+            schur_batch[j] = S_flat[:, j].reshape((n, n), order="F")
+
+        return schur_batch
 
     def get_schur_complement_from_reduced_basis(self, geometric_params: list[float]) -> np.ndarray:
         """
@@ -835,11 +986,11 @@ class LatticeSim(Lattice):
         schur_complement_approx: np.ndarray
             Approximated Schur complement
         """
+        import time
+        time_schur = time.time()
         # Evaluate alpha coefficients based on the chosen surrogate method
         if self.type_schur_complement_computation == "nearest_neighbor":
-            neigh = NearestNeighbors(n_neighbors=1, algorithm='auto')
-            neigh.fit(self.reduce_basis_dict["list_elements"])
-            distances, indices = neigh.kneighbors(np.array(geometric_params).reshape(1, -1))
+            distances, indices = self.neigh_function.kneighbors(np.array(geometric_params).reshape(1, -1))
             alphas = self.alpha_coefficients_greedy[indices[0][0]]
         elif self.type_schur_complement_computation == "linear":
             alphas = self.evaluate_alphas_linear_surrogate(geometric_params)
@@ -849,13 +1000,15 @@ class LatticeSim(Lattice):
             alphas = self.radial_basis_function.evaluate(np.array(geometric_params).reshape(1, -1)).squeeze()
         else:
             raise NotImplementedError("Not implemented schur complement computation method.")
-
+        print("Time to get alphas:", time.time() - time_schur)
         # Reconstruct Schur complement
         schur_complement_approx = self.reduce_basis_dict["basis_reduced_ortho"] @ alphas
+        print("Time to get Schur:", time.time() - time_schur)
         if self.shape_schur_complement is None:
             self.shape_schur_complement = int(sqrt(schur_complement_approx.shape[0]))
         schur_complement_approx_reshape = schur_complement_approx.reshape(
             (self.shape_schur_complement, self.shape_schur_complement), order='F')
+        print("Time to get Schur reshaped:", time.time() - time_schur)
 
         return schur_complement_approx_reshape
 
@@ -1072,7 +1225,7 @@ class LatticeSim(Lattice):
 
         print(Fore.GREEN + "Conjugate Gradient started."+ Style.RESET_ALL)
 
-        tol = 1e-12
+        tol = 1e-6
         mintol = 1e-12
         restart_every = 500000
         alpha_max = 100
@@ -1213,6 +1366,25 @@ class LatticeSim(Lattice):
                 self.residuals.append(residual_norm)
                 print(f"Residual norm: {residual_norm:.6e}")
 
+    def _define_preconditioner_approximation(self):
+        path_dataset_schur = Path(__file__).parents[2] / "data" / "outputs" / "schur_complement"
+        geom_type_str = "_" + "_".join(str(gt) for gt in self.geom_types)
+
+        if self.preconditioner_type == "mean":
+            name_file = Path("Schur_complement_mean" + geom_type_str)
+        elif self.preconditioner_type == "nearest_reference":
+            name_file = Path("Schur_complement" + geom_type_str)
+        elif self.preconditioner_type == "exact":
+            return # no precomputed data needed
+        else:
+            raise NotImplementedError("Not implemented preconditioner approximation method.")
+
+        if name_file.suffix.lower() != ".npz":
+            name_file = name_file.with_suffix(".npz")
+
+        path_file = path_dataset_schur / name_file
+        self.used_schur_preconditioner = np.load(path_file, allow_pickle=True)
+
     def define_preconditioner(self):
         """
         Define the preconditioner for the conjugate gradient solver.
@@ -1242,9 +1414,24 @@ class LatticeSim(Lattice):
         # Fast assembly via triplet accumulation
         rows_acc, cols_acc, data_acc = [], [], []
         n = self.free_DOF
+        if not self.preconditioner_type in ["mean", "nearest_reference"]:
+            print(Fore.YELLOW + "Preconditioner exact is used." + Style.RESET_ALL)
+
+        neigh = None
+        if self.preconditioner_type == "nearest_reference":
+            neigh = NearestNeighbors(n_neighbors=1, algorithm='auto')
+            neigh.fit(self.used_schur_preconditioner["radius_values"])
 
         for cell in self.cells:
-            local = cell.build_local_preconditioner().tocoo()
+            if self.preconditioner_type == "mean":
+                schur_matrices = self.used_schur_preconditioner["schur_matrices"]
+            elif self.preconditioner_type == "nearest_reference":
+                _, radii_nearest = neigh.kneighbors(np.array(cell.radii).reshape(1, -1))
+                schur_matrices = self.used_schur_preconditioner["schur_matrices"][radii_nearest[0][0]]
+            else:
+                schur_matrices = cell.schur_complement
+
+            local = cell.build_local_preconditioner(schur_matrices).tocoo()
             rows_acc.append(local.row)
             cols_acc.append(local.col)
             data_acc.append(local.data)

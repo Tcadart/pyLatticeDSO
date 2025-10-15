@@ -656,7 +656,7 @@ class Cell(object):
         nbBndDOFloc = len(self.node_in_order_simulation) * 6
         self.coupling_matrix_B = coo_matrix((data, (row, col)), shape=(nb_free_DOF, nbBndDOFloc))
 
-    def build_local_preconditioner(self):
+    def build_local_preconditioner(self, schur_mean = None) -> None:
         """
         Efficiently compute B * S * B^T but only over the active global rows touched by B.
         """
@@ -670,7 +670,11 @@ class Cell(object):
             raise ValueError("Incompatible dimensions between the coupling matrix and the Schur matrix.")
 
         # Ensure sparse Schur complement to avoid dense products
-        S = self.schur_complement
+        if schur_mean is None:
+            S = self.schur_complement
+        else:
+            S = schur_mean
+
         if not isspmatrix(S):
             S = csc_matrix(S)
         else:

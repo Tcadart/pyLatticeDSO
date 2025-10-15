@@ -219,6 +219,7 @@ class Lattice(object):
         self.geom_types = geometry.get("geom_types")
         self.enable_randomness = geometry.get("enable_randomness", False)
         self.range_radius = geometry.get("range_radius", [0.01, 0.1])
+        self.randomness_hybrid = geometry.get("randomness_hybrid", False)
 
         if None in [self.cell_size_x, self.cell_size_y, self.cell_size_z,
                     self.num_cells_x, self.num_cells_y, self.num_cells_z,
@@ -354,7 +355,11 @@ class Lattice(object):
 
                     pos_cell = [i, j, k]
                     if self.enable_randomness:
-                        radii = [random.uniform(self.range_radius[0], self.range_radius[1]) for _ in self.radii]
+                        if self.randomness_hybrid:
+                            radii = [random.uniform(self.range_radius[0], self.range_radius[1]) for _ in self.radii]
+                        else:
+                            random_radius = random.uniform(self.range_radius[0], self.range_radius[1])
+                            radii = [random_radius for _ in self.radii]
                     else:
                         radii = self.radii
                     new_cell = Cell(
@@ -1724,7 +1729,7 @@ class Lattice(object):
     def generate_mesh_lattice_Gmsh(self, cut_mesh_at_boundary: bool = False, mesh_size: float = 0.05,
                                    name_mesh: str = "Lattice",save_mesh: bool = False, save_STL: bool = True,
                                    volume_computation: bool = False, only_volume: bool = False,
-                                   only_relative_density: bool = False) -> float | None:
+                                   only_relative_density: bool = False, cell_index: int = None) -> float | None:
         """
         Generate a 2D mesh representation of the lattice structure using GMSH.
         Generating 3D mesh for simulation is not currently supported, but will be in the future.
@@ -1743,25 +1748,39 @@ class Lattice(object):
             If True, the mesh will be saved in STL format.
         volume_computation: bool
             If True, the volume of the mesh will be computed and printed.
+        only_volume: bool
+            If True, only the volume of the mesh will be computed and returned.
+        only_relative_density: bool
+            If True, only the relative density of the mesh will be computed and returned.
+        cell_index: int | None
+            If provided, only the specified cell will be meshed.
         """
-        if self.enable_simulation_properties == 1:
-            raise ValueError("mesh_file generation is not available for the current simulation method.")
-
         gmsh.initialize()
         gmsh.option.setNumber("General.Verbosity", 1)
         gmsh.model.add(name_mesh)
         dim = 3  # Dimension of the mesh
 
+        # Find beams to mesh
+        if cell_index is not None:
+            if cell_index < 0 or cell_index >= len(self.cells):
+                raise ValueError("Invalid cell index.")
+            beams_to_mesh = self.cells[cell_index].beams_cell
+        else:
+            beams_to_mesh = self.beams
+
         all_tags = []
         tags = []
-        for beam in self.beams:
+        for beam in beams_to_mesh:
             p1 = np.array(beam.point1.coordinates)
             p2 = np.array(beam.point2.coordinates)
             direction = p2 - p1
-            if np.linalg.norm(direction) < 1e-12 or beam.radius <= 0.0:
+            # Use initial radius if defined
+            radius = beam.initial_radius if getattr(beam, "initial_radius", None) is not None else beam.radius
+
+            if np.linalg.norm(direction) < 1e-12 or radius <= 0.0:
                 continue  # skip zero/near-zero length or non-positive radius
             if beam.index not in all_tags:
-                tag = gmsh.model.occ.addCylinder(*p1, *direction, beam.radius)
+                tag = gmsh.model.occ.addCylinder(*p1, *direction, radius)
                 all_tags.append(tag)
                 tags.append((dim, tag))
 
