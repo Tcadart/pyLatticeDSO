@@ -191,9 +191,9 @@ def extract_final_results(json_path: str | Path) -> tuple[float | None, float | 
 
 def main():
     # json_file = "data/outputs/optimization_data_files/Three_point_bending_optimized_expe.json"
-    # json_file = "data/outputs/optimization_data_files/Three_point_bending_optimized.json"
+    json_file = "data/outputs/optimization_data_files/Three_point_bending_optimized.json"
     # json_file = "data/outputs/optimization_data_files/Three_point_bending_constant_expe.json"
-    json_file = "data/outputs/optimization_data_files/Cantilever_L_beam_optimized_expe.json"
+    # json_file = "data/outputs/optimization_data_files/Cantilever_L_beam_optimized_expe.json"
     # json_file = "data/outputs/optimization_data_files/Cantilever_L_beam_constant_expe.json"
     # json_file = "data/outputs/optimization_data_files/Inversion_mechanism_optimized_expe.json"
     # json_file = "data/outputs/optimization_data_files/Inversion_mechanism_constant_expe.json"
