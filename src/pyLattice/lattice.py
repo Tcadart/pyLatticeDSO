@@ -1726,7 +1726,7 @@ class Lattice(object):
         return len(to_remove), removed_pts
 
     @timing.timeit
-    def generate_mesh_lattice_Gmsh(self, cut_mesh_at_boundary: bool = False, mesh_size: float = 0.05,
+    def generate_mesh_lattice_Gmsh(self, cut_mesh_at_boundary: bool = False, mesh_refinement: float = 1,
                                    name_mesh: str = "Lattice",save_mesh: bool = False, save_STL: bool = True,
                                    volume_computation: bool = False, only_volume: bool = False,
                                    only_relative_density: bool = False, cell_index: int = None) -> float | None:
@@ -1738,8 +1738,8 @@ class Lattice(object):
         -----------
         cut_mesh_at_boundary: bool
             If True, the mesh will be cut at the boundary of the lattice.
-        mesh_size: float
-            Size of the mesh elements.
+        mesh_refinement: float
+            Refinement factor for the mesh (higher values lead to finer meshes).
         name_mesh: str
             Name of the mesh to be generated.
         save_mesh: bool
@@ -1758,6 +1758,16 @@ class Lattice(object):
         gmsh.initialize()
         gmsh.option.setNumber("General.Verbosity", 1)
         gmsh.model.add(name_mesh)
+        gmsh.option.setNumber("Geometry.OCCFixDegenerated", 1)
+        gmsh.option.setNumber("Geometry.OCCFixSmallEdges", 1)
+        gmsh.option.setNumber("Geometry.OCCFixSmallFaces", 1)
+        gmsh.option.setNumber("Mesh.CharacteristicLengthFromCurvature", 1)
+        gmsh.option.setNumber("Mesh.MinimumCircleNodes", 12)  # help meshing thin cylinders
+        N_CIRC_TARGET = 24 * mesh_refinement  # ~elements around the circumference (same for all radii)
+        N_AXIAL_TARGET = 12 * mesh_refinement  # ~elements along each beam axis (same for all beam lengths)
+        mesh_size_max = 0.1
+        gmsh.option.setNumber("Mesh.MinimumCircleNodes", max(8, N_CIRC_TARGET))
+
         dim = 3  # Dimension of the mesh
 
         # Find beams to mesh
@@ -1770,6 +1780,7 @@ class Lattice(object):
 
         all_tags = []
         tags = []
+        axes = []
         for beam in beams_to_mesh:
             p1 = np.array(beam.point1.coordinates)
             p2 = np.array(beam.point2.coordinates)
@@ -1777,12 +1788,17 @@ class Lattice(object):
             # Use initial radius if defined
             radius = beam.initial_radius if getattr(beam, "initial_radius", None) is not None else beam.radius
 
-            if np.linalg.norm(direction) < 1e-12 or radius <= 0.0:
-                continue  # skip zero/near-zero length or non-positive radius
-            if beam.index not in all_tags:
-                tag = gmsh.model.occ.addCylinder(*p1, *direction, radius)
-                all_tags.append(tag)
-                tags.append((dim, tag))
+            min_len = max(1e-6, 2.5 * mesh_size_max)  # avoid too-short beams wrt mesh size
+            if np.linalg.norm(direction) < min_len or radius <= 0.0:
+                continue  # skip near-zero length or non-positive radius
+
+            tag = gmsh.model.occ.addCylinder(*p1, *direction, radius)
+            all_tags.append(tag)
+            tags.append((dim, tag))
+            L = float(np.linalg.norm(direction))
+            axes.append((p1.copy(), p2.copy(), float(radius), L))
+
+        gmsh.model.occ.synchronize()
 
         # Merge all beams into a single entity
         beam_entities = [(dim, tag) for tag in all_tags]
@@ -1821,8 +1837,55 @@ class Lattice(object):
 
 
         # Define mesh size
-        points = gmsh.model.getEntities(dim=0)
-        gmsh.model.mesh.setSize(points, mesh_size)
+        pts = gmsh.model.getEntities(0)
+
+        def _proj_param_and_dist(P, A, B):
+            AB = B - A
+            denom = float(np.dot(AB, AB))
+            if denom <= 1e-30:
+                return 0.0, float(np.linalg.norm(P - A))
+            t = float(np.dot(P - A, AB) / denom)
+            t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+            Q = A + t * AB
+            return t, float(np.linalg.norm(P - Q))
+
+        for _, pt in pts:
+            x, y, z = gmsh.model.occ.getCenterOfMass(0, pt)
+            P = np.array([x, y, z], dtype=float)
+
+            # find nearest beam (by radial distance to axis)
+            dmin = float("inf")
+            best = None  # (r, L)
+            for A, B, r, L in axes:
+                _, d = _proj_param_and_dist(P, A, B)
+                if d < dmin:
+                    dmin = d
+                    best = (r, L)
+
+            if best is None:
+                gmsh.model.mesh.setSize([(0, pt)], float(mesh_size_max))
+                continue
+
+            rnear, Lbeam = best
+
+            # target sizes for constant element counts:
+            # - around circumference: h_circ ≈ 2πr / N_CIRC_TARGET
+            # - along axis:          h_ax   ≈ L / N_AXIAL_TARGET
+            h_circ = float(2.0 * np.pi * rnear / max(1, N_CIRC_TARGET))
+            h_ax = float(Lbeam / max(1, N_AXIAL_TARGET))
+            h_base = max(1e-6, min(h_circ, h_ax))  # respect both targets, avoid zero
+
+            # allow growth away from the beam (outside ~3r → up to mesh_size)
+            if dmin <= rnear:
+                h = h_base
+            elif dmin >= 3.0 * rnear:
+                h = float(mesh_size)
+            else:
+                t = (dmin - rnear) / (2.0 * rnear)  # linear ramp between r and 3r
+                h = h_base + t * (float(mesh_size) - h_base)
+
+            gmsh.model.mesh.setSize([(0, pt)], float(h))
+
         gmsh.model.occ.synchronize()
 
         gmsh.model.mesh.generate(2)
