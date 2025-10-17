@@ -18,7 +18,7 @@
     ]
   },
   "gradient": {
-    "radius": {
+    "radii": {
       "rule": "linear",
       "direction_x": false,
       "direction_y": true,
@@ -41,7 +41,7 @@
       "direction": 0
     }
   },
-  "suplementary": {
+  "supplementary": {
     "node_uncertainty": 0.0,
     "erased_blocks": {
         "block_0": {
