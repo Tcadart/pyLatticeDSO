@@ -21,8 +21,7 @@ from pyLatticeSim.utils_simulation import solve_FEM_cell
 if TYPE_CHECKING:
     from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
 
-from pyLattice.timing import *
-timing = Timing()
+from pyLattice.timing import timing
 
 
 class LatticeSim(Lattice):

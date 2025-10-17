@@ -19,15 +19,12 @@ from collections import Counter
 import gmsh
 
 from .cell import *
-from .plotting_lattice import LatticePlotting
-from .timing import *
 from .utils import _validate_inputs_lattice, open_lattice_parameters
 from .gradient_properties import get_grad_settings, grad_material_setting, grad_settings_constant
+from .timing import timing
 
 if TYPE_CHECKING:
     from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
-
-timing = Timing()
 
 class Lattice(object):
     """
@@ -258,7 +255,7 @@ class Lattice(object):
         ]
 
         # Supplementary
-        supplementary = lattice_parameters.get("suplementary", {})
+        supplementary = lattice_parameters.get("supplementary", {})
         self.uncertainty_node = supplementary.get("node_uncertainty", 0.0)
 
         # Erased blocks
