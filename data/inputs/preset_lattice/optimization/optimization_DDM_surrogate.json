@@ -6,12 +6,12 @@
         "z": 1
       },
     "number_of_cells": {
-      "x": 10,
+      "x": 5,
       "y": 1,
       "z": 1
     },
-    "radii": [0.1],
-    "geom_types": ["BCC"]
+    "radii": [0.05, 0.05, 0.05],
+    "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
   },
     "simulation_parameters": {
       "enable" : true,
@@ -21,8 +21,8 @@
           "enable_preconditioner": true,
           "max_iterations": 10,
           "schur_complement_computation": {
-          "type": "RBF",
-          "precision_greedy": 1e-6
+            "type": "RBF",
+            "precision_greedy": 1e-6
         }
       }
   },
@@ -35,7 +35,7 @@
       }
     },
     "Force": {
-      "Force": {
+      "Load" : {
         "Surface": ["Xmax"],
         "DOF": ["Z"],
         "Value": [-0.01]
@@ -52,7 +52,7 @@
       },
       "constraints": {
         "relative_density": {
-          "value": 0.1
+          "value": 0.2
         }
       },
       "enable_parameter_normalization": true,

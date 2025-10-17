@@ -1,9 +1,14 @@
 """
 Simple schur complement example of an hybrid cell
 """
+from pathlib import Path
+
+import numpy as np
+
 from pyLattice.plotting_lattice import LatticePlotting
 from pyLatticeSim.lattice_sim import LatticeSim
-from pyLatticeSim.utils_simulation import get_schur_complement
+from pyLatticeSim.utils_schur import get_schur_complement
+from pyLatticeSim.utils_schur import save_schur_complement_npz
 
 
 name_file = "simulation/hybrid_cell_simulation"

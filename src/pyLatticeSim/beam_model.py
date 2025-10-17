@@ -66,7 +66,7 @@ class BeamModel:
         self.define_material_model(lattice)
         self.define_radius()
         self.define_mechanical_properties()
-        self.define_beam_geometry_data_circular_gradient()
+        # self.define_beam_geometry_data_circular_gradient()
 
     @timing.timeit
     def open_lattice_geometry(self, name_lattice_geometry: str):
@@ -98,6 +98,7 @@ class BeamModel:
         latticeMesh = latticeGeneration(lattice, self.COMM)
         self.domain, self.markers, self.facets, self.rad_tag_beam, self.tag_beam = (
             latticeMesh.mesh_lattice_cells(cell_index, save_mesh=False))
+
 
     @timing.timeit
     def define_radius(self, radius_dict: dict = None):

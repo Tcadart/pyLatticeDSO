@@ -3,7 +3,7 @@ Visualization and saving of lattice structures from lattice objects.
 
 Created in 2025-01-16 by Cadart Thomas, University of technology Belfort-Montbéliard.
 """
-from typing import Tuple
+from typing import Tuple, TYPE_CHECKING
 
 import numpy as np
 from matplotlib.lines import Line2D
@@ -14,6 +14,9 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 
 from .cell import Cell
+
+if TYPE_CHECKING:
+    from .lattice import Lattice
 
 from .utils import _get_beam_color, _prepare_lattice_plot_data, plot_coordinate_system, get_boundary_condition_color
 
@@ -53,9 +56,9 @@ class LatticePlotting:
                              voxelViz: bool = False, deformedForm: bool = False, file_save_path: str = None,
                              plotCellIndex: bool = False, plotNodeIndex: bool = False, explode_voxel: float = 0.0,
                              plotting: bool = True, nbRadiusBins: int = 5,
+                             domain_decomposition_simulation_plotting: bool = False,
                              enable_system_coordinates: bool = True, enable_boundary_conditions: bool = False,
-                             camera_position: Tuple[float, float] = None) -> None:
-
+                             camera_position: Tuple[float, float] = None, use_radius_grad_color: bool = False) -> None:
         """
         Visualizes the lattice in 3D using matplotlib.
 
@@ -105,7 +108,7 @@ class LatticePlotting:
 
         domain_decomposition_plotting = False
         try:
-            if lattice_object.domain_decomposition_solver:
+            if domain_decomposition_simulation_plotting and lattice_object.domain_decomposition_solver:
                 domain_decomposition_plotting = True
         except AttributeError:
             pass
@@ -122,6 +125,25 @@ class LatticePlotting:
         total_beam_labels = set()
         beam_color_type_lower = beam_color_type.lower()
 
+        if use_radius_grad_color:
+            # collect all positive radii to set normalization
+            radii_vals = []
+            for c in cells:
+                for b in c.beams_cell:
+                    rv = float(np.atleast_1d(getattr(b, "radius", 0.0))[0])
+                    if rv > 0.0:
+                        radii_vals.append(rv)
+            vmin = min(radii_vals) if radii_vals else 0.0
+            vmax = max(radii_vals) if radii_vals else 1.0
+            if vmax <= vmin:
+                vmax = vmin + 1.0  # avoid degenerate norm
+
+            cmap = plt.cm.jet
+            margin = -0.08 * (vmax - vmin)  # 5% margin at top and bottom
+            norm = mcolors.Normalize(vmin=vmin + margin, vmax=vmax - margin)
+            smap = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+
+
         if not voxelViz and not domain_decomposition_plotting:
             beamDraw = set()
             lines = []
@@ -132,39 +154,35 @@ class LatticePlotting:
             for cell in cells:
                 for beam in cell.beams_cell:
                     if beam.radius != 0.0 and beam not in beamDraw:
-                        colorBeam, idxColor = _get_beam_color(beam, color_palette, beam_color_type, idxColor, cells,
-                                                              nbRadiusBins)
-
-                        # Add line and node data
-                        beam_lines, beam_nodes, beam_indices, = _prepare_lattice_plot_data(beam, deformedForm)
-                        lines.extend(beam_lines)
-                        label = None
-                        color_for_plot = colorBeam
-
-                        if beam_color_type_lower == "radii":
+                        if use_radius_grad_color:
                             r_val = float(np.atleast_1d(getattr(beam, "radius", 0.0))[0])
-                            label = f"r={r_val:g}"
+                            color_for_plot = cmap(norm(r_val))
+                            label = None  # no categorical legend for gradient
+                        else:
+                            colorBeam, idxColor = _get_beam_color(
+                                beam, color_palette, beam_color_type, idxColor, cells, nbRadiusBins
+                            )
+                            color_for_plot = colorBeam
+                            label = None
 
-                        elif beam_color_type_lower == "material":
-                            label = f"Material {int(getattr(beam, 'material', 0))}"
-
-                        elif beam_color_type_lower == "type":
-                            label = f"Type {int(getattr(beam, 'type_beam', getattr(beam, 'geom_types', 0)))}"
-
-                        elif beam_color_type_lower == "radiusbin":
-                            # Construire l’étiquette de classe à partir des bornes idxColor (bin edges)
-                            edges = idxColor  # contient les bornes (longueur = nbRadiusBins+1)
-                            r_val = float(np.atleast_1d(getattr(beam, "radius", 0.0))[0])
-                            bi = np.digitize([r_val], edges, right=False)[0] - 1
-                            bi = max(0, min(len(edges) - 2, bi))
-                            left, right = edges[bi], edges[bi + 1]
-                            # Intervalle gauche-inclusif, droite-exclusive sauf dernier
-                            right_bracket = ']' if bi == len(edges) - 2 else ')'
-                            label = f"[{left:.3g}, {right:.3g}{right_bracket}"
+                            if beam_color_type_lower == "radii":
+                                r_val = float(np.atleast_1d(getattr(beam, "radius", 0.0))[0])
+                                label = f"r={r_val:g}"
+                            elif beam_color_type_lower == "material":
+                                label = f"Material {int(getattr(beam, 'material', 0))}"
+                            elif beam_color_type_lower == "type":
+                                label = f"Type {int(getattr(beam, 'type_beam', getattr(beam, 'geom_types', 0)))}"
+                            elif beam_color_type_lower == "radiusbin":
+                                edges = idxColor
+                                r_val = float(np.atleast_1d(getattr(beam, "radius", 0.0))[0])
+                                bi = np.digitize([r_val], edges, right=False)[0] - 1
+                                bi = max(0, min(len(edges) - 2, bi))
+                                left, right = edges[bi], edges[bi + 1]
+                                right_bracket = ']' if bi == len(edges) - 2 else ')'
+                                label = f"[{left:.3g}, {right:.3g}{right_bracket}"
 
                         if label is not None:
                             total_beam_labels.add(label)
-                            # Pour 'radii' (catégories potentiellement >10), on ne garde que les 10 premières dans la légende
                             if beam_color_type_lower in ("material", "type"):
                                 legend_map_beams.setdefault(label, color_for_plot)
                             elif beam_color_type_lower == "radii":
@@ -173,6 +191,10 @@ class LatticePlotting:
                             elif beam_color_type_lower == "radiusbin":
                                 legend_map_beams.setdefault(label, color_for_plot)
 
+
+                        # Add line and node data
+                        beam_lines, beam_nodes, beam_indices, = _prepare_lattice_plot_data(beam, deformedForm)
+                        lines.extend(beam_lines)
                         colors.extend([color_for_plot] * len(beam_lines))
 
                         for i, node in enumerate(beam_nodes):
@@ -217,18 +239,23 @@ class LatticePlotting:
                 x, y, z = cell.coordinate
                 dx, dy, dz = cell.size
 
-                beam_color_type = beam_color_type.lower()
-                if beam_color_type == "material":
-                    colorCell = color_palette[cell.beams_cell[0].material % len(color_palette)]
-                elif beam_color_type == "type":
-                    colorCell = color_palette[cell.geom_types % len(color_palette)]
-                elif beam_color_type == "radii":
-                    colorCell = cell.get_RGBcolor_depending_of_radius()
-                elif beam_color_type == "random":
-                    rng = np.random.default_rng()
-                    colorCell = rng.random(3,)
+                if use_radius_grad_color:
+                    # use first beam's radius (or any representative) for the cell color
+                    rv = float(np.atleast_1d(getattr(cell.beams_cell[0], "radius", 0.0))[0]) if cell.beams_cell else 0.0
+                    colorCell = cmap(norm(rv))
                 else:
-                    colorCell = "green"  # Default color
+                    beam_color_type = beam_color_type.lower()
+                    if beam_color_type == "material":
+                        colorCell = color_palette[cell.beams_cell[0].material % len(color_palette)]
+                    elif beam_color_type == "type":
+                        colorCell = color_palette[cell.geom_types % len(color_palette)]
+                    elif beam_color_type == "radii":
+                        colorCell = cell.get_RGBcolor_depending_of_radius()
+                    elif beam_color_type == "random":
+                        rng = np.random.default_rng()
+                        colorCell = rng.random(3, )
+                    else:
+                        colorCell = "green"
 
                 x_offset = explode_voxel * (x - latticeDimDict["x_min"]) / dx
                 y_offset = explode_voxel * (y - latticeDimDict["y_min"]) / dy
@@ -364,6 +391,11 @@ class LatticePlotting:
             )
             legend_elements_all.extend(bc_elems)
 
+        if use_radius_grad_color:
+            fig_for_cb = getattr(self, "fig", plt.gcf())
+            cbar = fig_for_cb.colorbar(smap, ax=self.ax, fraction=0.046, pad=0.04)
+            cbar.set_label("Beam radius")
+
         if legend_elements_all:
             self.ax.legend(handles=legend_elements_all, title="Legend", loc='upper right')
 
@@ -466,12 +498,15 @@ class LatticePlotting:
         plt.legend()
         plt.show()
 
-    def subplot_lattice_geometries(self, cells: list["Cell"], latticeDimDict: dict, nbRadiusBins: int = 5,
-                                   explodeVoxel: float = 0.0):
+    # at the top of the file, you already have: from matplotlib import pyplot as plt
+
+    def subplot_lattice_geometries(self, lattice: "Lattice", explodeVoxel: float = 0.0):
         """
         Create subplots:
         - One subplot per geometry (radii index) with voxel visualization.
         """
+        cells = lattice.cells
+        latticeDimDict = lattice.lattice_dimension_dict
         rmin = 0
         rmax = 0.1
 
@@ -479,8 +514,15 @@ class LatticePlotting:
         dimRadius = len(cells[0].radii) if hasattr(cells[0].radii, '__len__') else 1
         fig, axs = plt.subplots(1, dimRadius, figsize=(5 * dimRadius, 5), subplot_kw={'projection': '3d'})
         axs = [axs] if dimRadius == 1 else axs  # Ensure axs is always iterable
+
+        # ---- Camera settings: view along +Y (use azim=-90 for -Y) ----
         for ax in axs:
             ax.set_axis_off()
+            # ax.view_init(elev=0, azim=-90)  # elev≈20° for depth; azim=90° => +Y direction
+            try:
+                ax.set_proj_type('ortho')  # optional: orthographic projection (matplotlib>=3.2)
+            except Exception:
+                pass
 
         for rad in range(dimRadius):
             ax = axs[rad]
@@ -491,12 +533,10 @@ class LatticePlotting:
                 # Get color based on the radii value for current geometry
                 radius = cell.radii
                 radius_value = radius[rad] if hasattr(radius, '__len__') else radius
-                import matplotlib.cm as cm  # ajouter en haut si pas encore fait
+                import matplotlib.cm as cm
 
-                # Define the colormap from blue to red
+                # Define the colormap and normalize
                 colormap = cm.get_cmap('coolwarm')
-
-                # Normalize radii between 0 and 1
                 radius_norm = (radius_value - rmin) / (rmax - rmin)
                 radius_norm = np.clip(radius_norm, 0.0, 1.0)
                 colorCell = colormap(radius_norm)
@@ -511,7 +551,7 @@ class LatticePlotting:
             if self.axisSet is False:
                 self._set_min_max_axis(latticeDimDict)
 
-            ax.set_title(f'Geometry {rad}')
+            # ax.set_title(f'Geometry {rad}')
             ax.set_xlim3d(self.minAxis, self.maxAxis)
             ax.set_ylim3d(self.minAxis, self.maxAxis)
             ax.set_zlim3d(self.minAxis, self.maxAxis)
@@ -519,7 +559,6 @@ class LatticePlotting:
 
         plt.tight_layout()
         plt.show()
-
 
     def show(self):
         """

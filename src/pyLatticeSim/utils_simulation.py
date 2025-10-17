@@ -26,6 +26,7 @@ def solve_FEM_FenicsX(lattice : "LatticeSim"):
     simulationModel: FullScaleLatticeSimulation
         The simulation model containing the results of the simulation.
     """
+    start_time = time.time()
     # Generate the lattice model and mesh
     LatticeModel = BeamModel(MPI.COMM_SELF, lattice=lattice)
 
@@ -38,6 +39,7 @@ def solve_FEM_FenicsX(lattice : "LatticeSim"):
     # Solve the problem
     simulationModel.solve_problem()
 
+    print("FEM problem solved in %s seconds ---" % (time.time() - start_time))
     # Assign results to lattice object
     simulationModel.set_result_diplacement_on_lattice_object()
     simulationModel.set_reaction_force_on_lattice_with_FEM_results()
@@ -45,6 +47,30 @@ def solve_FEM_FenicsX(lattice : "LatticeSim"):
     # Get results to return
     xsol, globalDisplacementIndex = lattice.get_global_displacement()
     return xsol, simulationModel
+
+def solve_FEM_cell(lattice: "LatticeSim", cell):
+    """
+    Solve the finite element method problem for a specific cell in the lattice using FenicsX.
+
+    Parameters:
+    -----------
+    lattice: Lattice object
+        The lattice structure to be simulated.
+    cell: object
+        The specific cell within the lattice to be analyzed.
+
+    """
+    # Generate the lattice model and mesh for the specific cell
+    cell_model = BeamModel(MPI.COMM_SELF, lattice=lattice, cell_index=cell.index)
+
+    # Define the FE model and apply boundary conditions
+    simulation_model = FullScaleLatticeSimulation(cell_model, verbose=0)
+    simulation_model.apply_all_boundary_condition_on_cell_without_distinction(cell)
+
+    # Solve the problem
+    simulation_model.solve_problem()
+
+    return simulation_model
 
 def get_homogenized_properties(lattice: "LatticeSim"):
     """

@@ -16,6 +16,8 @@ matplotlib.use('TkAgg')  # Use TkAgg backend for interactive plots
 
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel
+from sklearn.gaussian_process.kernels import Product
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from scipy.interpolate import griddata
@@ -511,8 +513,6 @@ def evaluate_kriging_from_pickle(
     if np.ptp(y) == 0:
         raise ValueError("All relative densities are identical; cannot evaluate NRMSE/R² meaningfully.")
 
-    X_scaler = StandardScaler()
-
     # Train / test split
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=float(test_size), random_state=random_state
@@ -783,3 +783,114 @@ def evaluate_saved_kriging(
         "model_kernel": model_kernel,
         "model_path": str(model_path),
     }
+
+def _gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
+    """
+    Exact gradient of the GPR predictive mean wrt inputs for either:
+      • Pipeline(StandardScaler -> GaussianProcessRegressor), or
+      • bare GaussianProcessRegressor trained in original space.
+
+    Supports kernels:
+      - RBF
+      - ConstantKernel * RBF
+      - (ConstantKernel * RBF) + WhiteKernel
+      - RBF + WhiteKernel
+
+    Returns dmu/dx in ORIGINAL (unscaled) space.
+    """
+    import numpy as np
+    from sklearn.pipeline import Pipeline
+    from sklearn.gaussian_process import GaussianProcessRegressor
+    from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Product, WhiteKernel, Sum
+
+    # --- Extract scaler (optional) and GPR ---
+    scaler = None
+    gpr = None
+    if isinstance(model, Pipeline):
+        scaler = model.named_steps.get("x_scaler", None) if hasattr(model, "named_steps") else None
+        gpr = model.named_steps.get("gpr", None) if hasattr(model, "named_steps") else None
+        if gpr is None:
+            for _, step in reversed(model.steps):
+                if isinstance(step, GaussianProcessRegressor):
+                    gpr = step
+                    break
+        if gpr is None:
+            raise ValueError("Pipeline does not contain a GaussianProcessRegressor step.")
+    elif isinstance(model, GaussianProcessRegressor):
+        gpr = model
+    else:
+        raise ValueError("Model must be a sklearn Pipeline or a GaussianProcessRegressor.")
+
+    # --- Point in original space -> (optionally) scaled space ---
+    x_row = np.asarray(x_row, dtype=float).reshape(1, -1)
+    x_s = scaler.transform(x_row).reshape(-1) if scaler is not None else x_row.reshape(-1)
+
+    Xs = gpr.X_train_               # (n_train, d) in the space GPR was fit on
+    alpha = gpr.alpha_.reshape(-1)  # (n_train,)
+
+    # --- Extract effective (const, RBF) while ignoring WhiteKernel in cross-cov ---
+    def extract_const_rbf(kern):
+        # Returns (const_val, rbf_kernel) or None if unsupported
+        if isinstance(kern, Sum):
+            left = extract_const_rbf(kern.k1)
+            right = extract_const_rbf(kern.k2)
+            if left is None and right is None:
+                return None
+            return left if right is None else right
+        if isinstance(kern, WhiteKernel):
+            return None  # no cross-covariance contribution
+        if isinstance(kern, Product):
+            a, b = kern.k1, kern.k2
+            if isinstance(a, ConstantKernel) and isinstance(b, RBF):
+                return float(a.constant_value), b
+            if isinstance(b, ConstantKernel) and isinstance(a, RBF):
+                return float(b.constant_value), a
+            if isinstance(a, ConstantKernel) and isinstance(b, Product):
+                sub = extract_const_rbf(b)
+                if sub is not None:
+                    c, r = sub
+                    return float(a.constant_value) * c, r
+            if isinstance(b, ConstantKernel) and isinstance(a, Product):
+                sub = extract_const_rbf(a)
+                if sub is not None:
+                    c, r = sub
+                    return float(b.constant_value) * c, r
+        if isinstance(kern, RBF):
+            return 1.0, kern
+        return None
+
+    res = extract_const_rbf(gpr.kernel_)
+    if res is None:
+        raise ValueError("Kernel must reduce to RBF (optionally scaled by ConstantKernel) "
+                         "with an optional + WhiteKernel.")
+    const_val, rbf = res
+
+    # --- ARD or isotropic length-scales ---
+    length_scale = np.asarray(rbf.length_scale, dtype=float)
+    if length_scale.ndim == 0:
+        length_scale = np.full(Xs.shape[1], float(length_scale))
+    ell2 = length_scale**2  # (d,)
+
+    # --- Compute k(x, Xi) and gradient in the space GPR was fit on ---
+    diff = Xs - x_s                                # (n_train, d)
+    sq_maha = np.sum((diff**2) / ell2, axis=1)     # (n_train,)
+    k_vec = const_val * np.exp(-0.5 * sq_maha)     # (n_train,)
+
+    # ∂k_i/∂x_j = k_i * (Xi_j - x_j) / ell_j^2
+    dmu_dx_scaled = ((diff / ell2) * k_vec[:, None]).T @ alpha  # (d,)
+
+    # --- Chain rule back to original input space if a StandardScaler was used ---
+    if scaler is not None:
+        dmu_dx = dmu_dx_scaled / np.asarray(scaler.scale_, dtype=float)
+    else:
+        dmu_dx = dmu_dx_scaled
+
+    # --- IMPORTANT: undo target normalization if gpr.normalize_y was used ---
+    # sklearn stores _y_train_std when normalize_y=True; predictions are de-normalized,
+    # so the derivative must be scaled by this std factor.
+    y_std = getattr(gpr, "_y_train_std", None)
+    if y_std is not None and np.isfinite(y_std).all():
+        # y_std is scalar for single-output GPR
+        dmu_dx = dmu_dx * float(np.squeeze(y_std))
+
+    return dmu_dx

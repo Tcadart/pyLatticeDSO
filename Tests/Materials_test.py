@@ -84,7 +84,7 @@ class TestTiming:
         assert timing.call_stack == []
         assert timing.call_graph is not None
         assert timing.call_counts is not None
-        assert hasattr(timing, 'start_time')
+        assert hasattr(timing, 'start_time85')
 
     def test_timing_decorator(self):
         """Test timing decorator functionality."""

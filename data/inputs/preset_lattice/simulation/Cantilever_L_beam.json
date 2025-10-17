@@ -1,0 +1,58 @@
+{
+  "geometry": {
+    "cell_size": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      },
+    "number_of_cells": {
+      "x": 6,
+      "y": 1,
+      "z": 6
+    },
+    "radii": [0.1, 0.1, 0.1],
+    "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
+  },
+  "suplementary": {
+    "erased_blocks": {
+      "block_0": {
+        "start_point": {
+          "x": 3.0,
+          "y": 0.0,
+          "z": 3.0
+        },
+        "dimensions_block": {
+          "x": 3.0,
+          "y": 1.0,
+          "z": 3.0
+        }
+      }
+    }
+  },
+    "simulation_parameters": {
+      "enable" : true,
+      "material": "VeroClear",
+      "periodicity": false,
+      "DDM": {
+        "enable_preconditioner": true,
+        "max_iterations": 1000,
+        "schur_complement_computation": {
+          "type": "exact"
+        }
+      }
+  },
+  "boundary_conditions": {
+    "Displacement": {
+      "Displacement": {
+        "Surface": ["Xmax", "Zmin"],
+        "DOF": ["Z"],
+        "Value": [-0.1]
+      },
+      "Encastre": {
+        "Surface": ["Zmax"],
+        "DOF": ["X", "Y", "Z", "RX", "RY", "RZ"],
+        "Value": [0, 0, 0, 0, 0, 0]
+      }
+    }
+  }
+}

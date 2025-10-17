@@ -7,7 +7,7 @@ from pyLatticeSim.utils_schur import load_schur_complement_dataset
 from pyLatticeSim.greedy_algorithm import reduce_basis_greedy, find_name_file_reduced_basis
 from pyLatticeSim.lattice_sim import LatticeSim
 
-name_file = "simulation/3PointBending"
+name_file = "simulation/hybrid_cell_simulation"
 tolerance_greedy = 1e-6
 
 lattice_Sim_object = LatticeSim(name_file)

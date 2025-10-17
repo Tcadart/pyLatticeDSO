@@ -1,0 +1,70 @@
+{
+  "geometry": {
+    "cell_size": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      },
+    "number_of_cells": {
+      "x": 10,
+      "y": 5,
+      "z": 5
+    },
+    "radii": [0.03],
+    "geom_types": ["Hybrid4"]
+  },
+    "simulation_parameters": {
+      "enable" : true,
+      "material": "VeroClear",
+      "periodicity": true,
+      "DDM": {
+        "enable_preconditioner": true,
+        "max_iterations": 20,
+        "schur_complement_computation": {
+          "type": "RBF",
+          "precision_greedy": 1e-6
+        }
+      }
+  },
+  "boundary_conditions": {
+    "Displacement": {
+      "Fixed" : {
+        "Surface": ["Xmax"],
+        "DOF": ["X"],
+        "Value": [0]
+      },
+      "SimpleSupport": {
+        "Surface": ["Xmin", "Zmin"],
+        "DOF": ["Y", "Z"],
+        "Value": [0, 0],
+        "SurfaceCells": ["Zmin"]
+      }
+    },
+    "Force": {
+      "Load": {
+        "Surface": ["Xmax", "Zmax"],
+        "DOF": ["Z"],
+        "Value": [-0.1],
+        "SurfaceCells": ["Xmax"]
+      }
+    }
+  },
+  "optimization_informations": {
+      "objective_function": "min",
+      "objective_type": "compliance",
+      "max_iterations": 10,
+      "optimization_parameters": {
+        "type": "linear",
+        "direction" : "x",
+        "hybrid": false
+      },
+      "constraints": {
+        "relative_density": {
+          "value": 0.15
+        }
+      },
+      "enable_parameter_normalization": true,
+      "simulation_type": "DDM",
+      "enable_gradient_computing": true
+  }
+}

@@ -113,7 +113,7 @@ def reduce_basis_greedy(schur_complement_dict_to_reduce: dict , tol_greedy: floa
     norm_mainelem_sorted = projfieldsnorm[mainelem[vsort]]
 
     if file_name is not None:
-        save_reduced_basis(file_name, basis_reduced_ortho[:, vsort], alpha_ortho, list_elements)
+        save_reduced_basis(file_name, basis_reduced_ortho, alpha_ortho, list_elements)
 
     projfieldpp = [matrix_schur[i] for i in mainelem[vsort]]
     if verbose >= 1:

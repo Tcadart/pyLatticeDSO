@@ -32,7 +32,7 @@ class latticeGeneration:
         """
         Determine mesh size
         """
-        self._mesh_size = mesh_element_lenght
+        self._mesh_size = mesh_element_lenght * self.lattice.cell_size_x
 
     @timingLG.timeit
     def mesh_lattice_cells(self, cell_index, mesh_element_lenght:float = 0.05, save_mesh:bool = True):
@@ -95,6 +95,7 @@ class latticeGeneration:
                             if tagAdd not in self._tag_point_index:
                                 self._tag_point_index[tagAdd] = []
                             self._tag_point_index[tagAdd].append(point_id)
+
 
 
     @timingLG.timeit

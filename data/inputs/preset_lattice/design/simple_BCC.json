@@ -1,16 +1,25 @@
 {
   "geometry": {
     "cell_size": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      },
-    "number_of_cells": {
-      "x": 3,
-      "y": 3,
-      "z": 3
+      "x": 1,
+      "y": 1,
+      "z": 1
     },
-    "radii": [0.1],
-    "geom_types": ["BCC"]
-  }
+    "number_of_cells": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "radii": [
+      0.09252005142831997
+    ],
+    "geom_types": [
+      "BCC"
+    ]
+  },
+  "simulation_parameters": {
+    "enable" : true,
+    "material": "VeroClear",
+    "periodicity": true
+    }
 }

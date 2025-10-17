@@ -30,9 +30,6 @@ a
 fort.7
 __pycache__
 /src/Lattice.egg-info
-/saved_lattice_file/HybridCellForRelativeDensity
-/saved_lattice_file/RelativeDensity
-/Saved_Lattice/*.json
 *.pkl
 *.stlbak
 *.msh
@@ -42,6 +39,7 @@ data/outputs/simulation_results/*
 !data/outputs/simulation_results/figure_homogenization/
 
 /data/outputs/schur_complement/Schur_complement_BCC_Hybrid1_Hybrid4.npz
+/data/outputs/saved_lattice_file
 
 # Sphinx documentation build files
 docs/build/

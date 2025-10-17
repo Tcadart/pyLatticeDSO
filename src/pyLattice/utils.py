@@ -7,10 +7,14 @@ import math
 import os
 import pickle
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, TYPE_CHECKING
 
 import numpy as np
 import matplotlib.colors as mcolors
+
+if TYPE_CHECKING:
+    from pyLattice.lattice import Lattice
+
 
 def open_lattice_parameters(file_name: str):
     """
@@ -144,27 +148,236 @@ def function_penalization_Lzone(radius: float, angle: float) -> float:
     return radius / math.tan(math.radians(angle) / 2)
 
 
+
 def save_lattice_object(lattice, file_name: str = "LatticeObject") -> None:
     """
-    Save the lattice object to a file.
+    Save ONLY the base `Lattice` state to a pickle, even if `lattice` is an instance
+    of a subclass (e.g., LatticeSim/LatticeOpti) carrying non-picklable fields.
+
+    Important: converts internal sets (beams/nodes and per-cell containers) to lists
+    before pickling to avoid hashing during unpickling. A marker `_pickle_format`
+    is stored so the loader can restore sets later.
+    Note: this function does NOT save the full state of subclasses, only the base
+    `Lattice` attributes. (TO UPDATE if needed)
 
     Parameters:
     -----------
+    lattice: Lattice
+        Lattice object to save.
     file_name: str
-        Name of the file to save (with or without the '.pkl' extension).
+        Name of the pickle file to save.
     """
-    project_root = Path(__file__).resolve().parent.parent
-    path = project_root / "saved_lattice_file" / file_name
+    def _find_base_lattice_cls(obj):
+        for cls in obj.__class__.__mro__:
+            if cls.__name__ == "Lattice" and getattr(cls, "__module__", "").endswith("pyLattice.lattice"):
+                return cls
+        return None
+
+    def _extract_base_lattice(obj):
+        base_cls = _find_base_lattice_cls(obj)
+        if base_cls is not None and obj.__class__ is not base_cls:
+            base = object.__new__(base_cls)
+            base_attrs = [
+                "_verbose",
+                "name_lattice",
+                "x_min", "y_min", "z_min", "x_max", "y_max", "z_max",
+                "cell_size_x", "cell_size_y", "cell_size_z",
+                "num_cells_x", "num_cells_y", "num_cells_z",
+                "size_x", "size_y", "size_z",
+                "radii", "geom_types",
+                "grad_dim", "grad_radius", "grad_mat",
+                "symmetry_lattice", "uncertainty_node", "eraser_blocks",
+                "enable_periodicity", "enable_simulation_properties",
+                "_simulation_flag", "_optimization_flag",
+                "cells", "beams", "nodes",
+                "edge_tags", "face_tags", "corner_tags",
+                "lattice_dimension_dict"
+            ]
+            for a in base_attrs:
+                setattr(base, a, getattr(obj, a, None))
+        else:
+            base = obj
+
+        # per-cell containers (after sets->lists conversion)
+        for c in getattr(base, "cells", []) or []:
+            # drop pointers back to lattice/parents
+            for attr in ("lattice", "parent", "owner", "_lattice_ref"):
+                if hasattr(c, attr):
+                    setattr(c, attr, None)
+
+            # beams inside the cell
+            beams_list = getattr(c, "beams_cell", []) or []
+            for b in beams_list:
+                for attr in ("cell", "cells", "lattice", "owner", "parent", "_cell_ref", "_lattice_ref"):
+                    if hasattr(b, attr):
+                        setattr(b, attr, None)
+
+            # points/nodes inside the cell
+            pts_list = getattr(c, "points_cell", []) or []
+            for p in pts_list:
+                for attr in ("cell", "cells", "lattice", "owner", "parent", "incident_beams", "_lattice_ref"):
+                    if hasattr(p, attr):
+                        setattr(p, attr, None)
+                # EXCLUDE connected_beams from pickle (breaks deep cycles)
+                if hasattr(p, "connected_beams"):
+                    try:
+                        p.connected_beams.clear()
+                    except Exception:
+                        pass
+                    p.connected_beams = None
+
+        # top-level nodes/beams as well (if present independently of cells)
+        for b in getattr(base, "beams", []) or []:
+            for attr in ("cell", "cells", "lattice", "owner", "parent", "_cell_ref", "_lattice_ref"):
+                if hasattr(b, attr):
+                    setattr(b, attr, None)
+
+        for n in getattr(base, "nodes", []) or []:
+            for attr in ("cell", "cells", "lattice", "owner", "parent", "incident_beams", "_lattice_ref"):
+                if hasattr(n, attr):
+                    setattr(n, attr, None)
+            # EXCLUDE connected_beams from pickle (breaks deep cycles)
+            if hasattr(n, "connected_beams"):
+                try:
+                    n.connected_beams.clear()
+                except Exception:
+                    pass
+                n.connected_beams = None
+
+        if isinstance(getattr(base, "beams", None), set):
+            base.beams = list(base.beams)
+        if isinstance(getattr(base, "nodes", None), set):
+            base.nodes = list(base.nodes)
+        for c in getattr(base, "cells", []) or []:
+            if isinstance(getattr(c, "beams_cell", None), set):
+                c.beams_cell = list(c.beams_cell)
+            if isinstance(getattr(c, "points_cell", None), set):
+                c.points_cell = list(c.points_cell)
+        setattr(base, "_pickle_format", "lattice_v2_lists")
+        return base
+
+    project_root = Path(__file__).resolve().parents[2]
+    path = project_root / "data" / "outputs" / "saved_lattice_file" / file_name
     if path.suffix != ".pkl":
-        path = path.with_suffix('.pkl')
+        path = path.with_suffix(".pkl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    lattice_to_save = _extract_base_lattice(lattice)
+
+    def _diagnose_pickle_issue(root, max_depth: int = 10, max_paths: int = 100) -> None:
+        """
+        Heuristic traversal to localize recursion/cycles and unpicklable attributes.
+        Instead of bailing out when pickle raises RecursionError at the root,
+        this version continues to descend into children to report the *paths* that
+        introduce back-references (e.g., '.cells[3].beams_cell[5].lattice').
+        """
+        import pickle
+        from collections import Counter, deque
+
+        seen: set[int] = set()
+        stack: list[int] = []
+        issues: list[tuple[str, str, str]] = []
+        type_hits = Counter()
+
+        def add_issue(kind: str, path: list[str], note: str = ""):
+            issues.append((kind, " ".join(path), note))
+            if len(issues) >= max_paths:
+                raise StopIteration
+
+        def render_path(path: list[str]) -> str:
+            # compact " .a ['k'] [2] " formatting
+            out = []
+            for token in path:
+                if token.startswith(".") or token.startswith("["):
+                    out.append(token)
+                else:
+                    out.append(token)
+            return "".join(out)
+
+        def children(obj):
+            # yield (token, child) pairs
+            if isinstance(obj, (list, tuple, set, frozenset)):
+                for i, v in enumerate(list(obj)[:200]):
+                    yield f"[{i}]", v
+            elif isinstance(obj, dict):
+                for k, v in list(obj.items())[:200]:
+                    # keep keys printable and short
+                    kk = repr(k)
+                    if len(kk) > 40:
+                        kk = kk[:37] + "..."
+                    yield f"[{kk}]", v
+            else:
+                d = getattr(obj, "__dict__", None)
+                if isinstance(d, dict):
+                    for k, v in list(d.items())[:200]:
+                        yield f".{k}", v
+
+        def dfs(obj, depth: int, path: list[str]):
+            oid = id(obj)
+            type_hits[type(obj).__name__] += 1
+
+            if oid in stack:
+                # explicit cycle
+                add_issue("CYCLE", [render_path(path)], "(back-reference)")
+                return
+            if depth > max_depth:
+                add_issue("DEPTH_LIMIT", [render_path(path)], "truncated")
+                return
+
+            stack.append(oid)
+            try:
+                try:
+                    # Try pickling this node; if it explodes, dive into children instead of stopping.
+                    pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+                except RecursionError as re:
+                    # Record, but *also* dive to find the exact attribute(s)
+                    add_issue("RECURSION", [render_path(path)], repr(re))
+                    # continue to children to localize
+                    pass
+                except Exception as ex:
+                    # Not directly picklable; we’ll dive
+                    add_issue("UNPICKLABLE", [render_path(path)], f"type={type(obj).__name__}: {ex!r}")
+
+                # Heuristics: attributes commonly causing back-refs
+                if hasattr(obj, "__dict__"):
+                    for bad in ("lattice", "parent", "owner", "_lattice_ref", "_cell_ref", "cells", "incident_beams"):
+                        if bad in obj.__dict__:
+                            add_issue("SUSPECT_ATTR", [render_path(path + [f'.{bad}'])], f"type={type(obj).__name__}")
+
+                # Traverse children
+                for tok, child in children(obj):
+                    cid = id(child)
+                    if cid in seen:
+                        continue
+                    seen.add(cid)
+                    dfs(child, depth + 1, path + [tok])
+            finally:
+                stack.pop()
+
+        try:
+            dfs(root, 0, [type(root).__name__])
+        except StopIteration:
+            pass
+
+        # Print summary
+        if issues:
+            print("\n[Pickle diagnostics] Suspicious paths:")
+            for kind, p, note in issues:
+                print(f" - {kind}: {p} {note}")
+            common = ", ".join(f"{k}:{v}" for k, v in type_hits.most_common(10))
+            print(f"[Pickle diagnostics] Top types visited: {common}")
+        else:
+            print("\n[Pickle diagnostics] No obvious culprit found.")
 
     try:
         with open(path, "wb") as file:
-            pickle.dump(lattice, file)
+            pickle.dump(lattice_to_save, file, protocol=pickle.HIGHEST_PROTOCOL)
     except Exception as e:
-        raise IOError(f"Failed to save lattice pickle: {e}")
+            print("[save_lattice_object] Pickle failed:", repr(e))
+            _diagnose_pickle_issue(lattice_to_save, max_depth=10, max_paths=100)
+            raise RuntimeError(f"Failed to save lattice pickle to {path}: {e}")
 
-    print(f"Lattice pickle saved successfully to {path}")
+    print(f"Lattice (base state) pickle saved successfully to {path}")
 
 
 def _prepare_lattice_plot_data(beam, deformedForm: bool = False):
@@ -404,16 +617,16 @@ def save_JSON_to_Grasshopper(lattice, nameLattice: str = "LatticeObject", multip
     multipleParts: int, optional (default: 1)
         Number of parts to save.
     """
-    folder = "saved_lattice_file"
-    if not os.path.exists(folder):
-        os.makedirs(folder)
+    folder_path = Path(__file__).resolve().parents[2] / "data" / "outputs" / "saved_lattice_file"
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
 
     numberCell = len(lattice.cells)
     cellsPerPart = max(1, numberCell // multipleParts)
 
     for partIdx in range(multipleParts):
         partName = f"{nameLattice}_part{partIdx + 1}.json" if multipleParts > 1 else f"{nameLattice}.json"
-        file_pathJSON = os.path.join(folder, partName)
+        file_pathJSON = os.path.join(folder_path, partName)
 
         partNodesX = []
         partNodesY = []
@@ -467,3 +680,15 @@ def plot_coordinate_system(ax):
     ax.text(origin[0] + axis_length, origin[1], origin[2], "X", color='r')
     ax.text(origin[0], origin[1] + axis_length, origin[2], "Y", color='g')
     ax.text(origin[0], origin[1], origin[2] + axis_length, "Z", color='b')
+
+def _discard(container, item):
+    if container is None:
+        return
+    if isinstance(container, set):
+        container.discard(item)
+    else:
+        try:
+            container.remove(item)
+        except ValueError:
+            pass
+

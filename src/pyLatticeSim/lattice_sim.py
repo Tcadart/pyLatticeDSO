@@ -1,19 +1,22 @@
 from math import sqrt
+from pathlib import Path
 from typing import TYPE_CHECKING
 import numpy as np
 from colorama import Fore, Style
-from scipy.interpolate import RBFInterpolator
-from scipy.sparse import coo_matrix, lil_matrix
+from scipy.sparse import coo_matrix
 from scipy.sparse.linalg import LinearOperator, splu, spilu
 from sklearn.neighbors import NearestNeighbors
 
 from pyLattice.beam import Beam
 from pyLattice.cell import Cell
 from pyLattice.lattice import Lattice
+from pyLattice.plotting_lattice import LatticePlotting
 from pyLattice.utils import open_lattice_parameters
 from pyLatticeSim.greedy_algorithm import load_reduced_basis
-from pyLatticeSim.utils_schur import get_schur_complement
+from pyLatticeSim.utils_rbf import ThinPlateSplineRBF
+from pyLatticeSim.utils_schur import get_schur_complement, load_schur_complement_dataset
 from pyLatticeSim.conjugate_gradient_solver import conjugate_gradient_solver
+from pyLatticeSim.utils_simulation import solve_FEM_cell
 
 if TYPE_CHECKING:
     from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
@@ -36,6 +39,8 @@ class LatticeSim(Lattice):
         self.material_name = None
         self.number_iteration_max = None
         self.enable_preconditioner = None
+        self.preconditioner_type = None
+        self.used_schur_preconditioner = None
         self.type_schur_complement_computation = None
         self.precision_greedy: float | None = None
         self.radial_basis_function = None
@@ -50,12 +55,16 @@ class LatticeSim(Lattice):
         self.global_displacement_index = None
         self.n_DOF_per_node: int = 6  # Number of DOF per node (3 translation + 3 rotation)
         self.penalization_coefficient: float = 1.5  # Fixed with previous optimization
-        self.surrogate_model_implemented = ["exact", "nearest_neighbor", "linear", "RBF"]
+        self.surrogate_model_implemented = ["exact", "FE2", "nearest_neighbor", "linear", "RBF"]
         self.enable_gradient_computing = False # Enable gradient computing for optimization
+        self.is_penalized = False # True if the lattice has penalized beams at nodes
+        self.neigh_function = None # Nearest neighbor function for nearest neighbor surrogate model
 
         self.define_connected_beams_for_all_nodes()
-        self.define_angles_between_beams()
-        self.set_penalized_beams()
+        if self.enable_simulation_properties and (not self.domain_decomposition_solver or
+                                                  self.type_schur_complement_computation == "exact"):
+            self.define_angles_between_beams()
+            self.set_penalized_beams()
         # Define global indexation
         self.define_node_index_boundary()
         self.define_node_local_tags()
@@ -63,15 +72,75 @@ class LatticeSim(Lattice):
         self.are_cells_identical()
 
         if self.domain_decomposition_solver:
-            if not self.type_schur_complement_computation == "exact":
+            if not self.type_schur_complement_computation in ["exact", "FE2"]:
                 self.reduce_basis_dict = load_reduced_basis(self, self.precision_greedy)
                 self.alpha_coefficients_greedy = self.reduce_basis_dict["alpha_ortho"].T
+                if self.type_schur_complement_computation == "nearest_neighbor":
+                    self.neigh_function = NearestNeighbors(n_neighbors=1, algorithm='auto')
+                    self.neigh_function.fit(self.reduce_basis_dict["list_elements"])
+
+            if self.enable_preconditioner:
+                self._define_preconditioner_approximation()
 
             self.calculate_schur_complement_cells()
 
             self.preconditioner = None
             self.iteration = 0
             self.residuals = []
+
+    @classmethod
+    def open_pickle_lattice(cls, file_name: str = "LatticeObject", sim_config: str | None = None) -> "LatticeSim":
+        return super(LatticeSim, cls).open_pickle_lattice(file_name=file_name, sim_config=sim_config)
+
+    def _post_load_init(self, sim_config: str | None = None) -> None:
+        """Finalize a pickled Lattice upgraded to LatticeSim without regenerating geometry."""
+        self._simulation_flag = True
+        # sensible defaults
+        self.domain_decomposition_solver = getattr(self, "domain_decomposition_solver", False)
+        self.enable_periodicity = None
+        self.boundary_conditions = None
+        self.enable_simulation_properties = None
+        self.material_name = getattr(self, "material_name", None)
+        self.number_iteration_max = getattr(self, "number_iteration_max", None)
+        self.enable_preconditioner = getattr(self, "enable_preconditioner", None)
+        self.preconditioner_type = getattr(self, "preconditioner_type", None)
+        self.type_schur_complement_computation = getattr(self, "type_schur_complement_computation", "exact")
+        self.precision_greedy = getattr(self, "precision_greedy", None)
+        self.radial_basis_function = getattr(self, "radial_basis_function", None)
+        self.shape_schur_complement = getattr(self, "shape_schur_complement", None)
+        self._parameters_define = getattr(self, "_parameters_define", False)
+
+        # load simulation parameters from a JSON if provided
+        if sim_config is not None:
+            self.define_simulation_parameters(sim_config)
+            assert self.material_name is not None, "Material name_lattice must be defined for simulation properties."
+
+        # rebuild simulation-dependent structures
+        self.define_connected_beams_for_all_nodes()
+        if not self.domain_decomposition_solver or self.type_schur_complement_computation == "exact":
+            self.define_angles_between_beams()
+            self.set_penalized_beams()
+
+        self.define_node_index_boundary()
+        self.define_node_local_tags()
+        self.set_boundary_conditions()
+        self.are_cells_identical()
+
+        if self.domain_decomposition_solver:
+            if self.type_schur_complement_computation not in ["exact", "FE2"]:
+                self.reduce_basis_dict = load_reduced_basis(self, self.precision_greedy)
+                self.alpha_coefficients_greedy = self.reduce_basis_dict["alpha_ortho"].T
+            self.calculate_schur_complement_cells()
+            self.preconditioner = None
+            self.iteration = 0
+            self.residuals = []
+
+    def _sorted_nodes(self, nodes, ndigits: int = 9):
+        """Deterministic ordering for any node iterable (kills randomness from set iteration)."""
+        return sorted(
+            nodes,
+            key=lambda n: (round(n.x, ndigits), round(n.y, ndigits), round(n.z, ndigits), getattr(n, "index", -1)),
+        )
 
     @timing.timeit
     def set_penalized_beams(self) -> None:
@@ -84,11 +153,9 @@ class LatticeSim(Lattice):
             beams_to_remove = []
             beams_to_add = []
             points_to_add = []
-
             for beam in list(cell.beams_cell):
                 L1 = beam.angle_point_1.get("L_zone", 0)
                 L2 = beam.angle_point_2.get("L_zone", 0)
-
                 # No modification if both are zero or negative
                 if L1 <= 0 and L2 <= 0:
                     continue
@@ -126,15 +193,111 @@ class LatticeSim(Lattice):
                     b3.set_beam_mod()
                     beams_to_add.append(b3)
 
+                if L1 > 0:
+                    b_mid.associated_beams_mod.append(b1)
+                if L2 > 0:
+                    b_mid.associated_beams_mod.append(b3)
+
                 beams_to_remove.append(beam)
 
             cell.add_beam(beams_to_add)
             cell.add_point(points_to_add)
             cell.remove_beam(beams_to_remove)
 
-        self._refresh_nodes_and_beams()
         # Update index
         self.define_beam_node_index()
+        self.is_penalized = True
+        print(Fore.GREEN + "Lattice penalization applied to beams at nodes." + Style.RESET_ALL)
+
+
+    @timing.timeit
+    def reset_penalized_beams(self) -> None:
+        """
+        Revert the penalization modifications made by set_penalized_beams.
+        This involves:
+        - Rewiring beams to connect original nodes directly, bypassing penalized segments.
+        - Removing penalized beams and any orphaned nodes.
+        Note: This operation is only valid if the lattice has been previously penalized.
+        """
+        if not self.is_penalized:
+            print(Fore.YELLOW + "Warning: lattice does not appear to be penalized." + Style.RESET_ALL)
+            return
+
+        def _ensure_set(x):
+            if isinstance(x, set):
+                return x
+            return set(x) if x is not None else set()
+
+        def _remove_beams(cell, beams):
+            if not beams:
+                return
+            cell.remove_beam(list(beams))
+
+        def _remove_points(cell, pts):
+            if not pts:
+                return
+            cell.remove_point(list(pts))
+
+        def _rewire_end(bmid, old_node, new_node):
+            """Replace old_node by new_node at one end of bmid."""
+            if old_node is new_node:
+                return
+            old_node.connected_beams = _ensure_set(getattr(old_node, "connected_beams", None))
+            old_node.connected_beams.discard(bmid)
+
+            if bmid.point1 is old_node:
+                bmid.point1 = new_node
+            elif bmid.point2 is old_node:
+                bmid.point2 = new_node
+
+            new_node.connected_beams = _ensure_set(getattr(new_node, "connected_beams", None))
+            new_node.connected_beams.add(bmid)
+
+        for cell in self.cells:
+            beams = list(cell.beams_cell)
+
+            beams_to_delete = set()
+            orphan_points = set()
+
+            for bmid in beams:
+                if getattr(bmid, "beam_mod", False):
+                    continue
+
+                assoc = getattr(bmid, "associated_beams_mod", None)
+                if not assoc:
+                    continue
+
+                left_pen, right_pen = None, None
+                for b in assoc:
+                    if b.point1 is bmid.point1 or b.point2 is bmid.point1:
+                        left_pen = b
+                    elif b.point1 is bmid.point2 or b.point2 is bmid.point2:
+                        right_pen = b
+
+                if left_pen is not None:
+                    new_start = left_pen.point1 if left_pen.point2 is bmid.point1 else left_pen.point2
+                    _rewire_end(bmid, bmid.point1, new_start)
+                    beams_to_delete.add(left_pen)
+
+                if right_pen is not None:
+                    new_end = right_pen.point1 if right_pen.point2 is bmid.point2 else right_pen.point2
+                    _rewire_end(bmid, bmid.point2, new_end)
+                    beams_to_delete.add(right_pen)
+
+            _remove_beams(cell, beams_to_delete)
+
+            for p in list(cell.points_cell):
+                if getattr(p, "node_mod", False):
+                    p.connected_beams = _ensure_set(getattr(p, "connected_beams", None))
+                    if len(p.connected_beams) == 0:
+                        orphan_points.add(p)
+
+            _remove_points(cell, orphan_points)
+
+        self._refresh_nodes_and_beams()
+        self.define_beam_node_index()
+        self.is_penalized = False
+        print(Fore.GREEN + "Lattice penalization reverted." + Style.RESET_ALL)
 
     def define_simulation_parameters(self, name_file: str):
         """
@@ -154,21 +317,24 @@ class LatticeSim(Lattice):
         DDM_parameters = sim_params.get("DDM", None)
         if DDM_parameters is not None:
             self.enable_preconditioner = DDM_parameters.get("enable_preconditioner", False)
+            self.preconditioner_type = DDM_parameters.get("preconditioner_type", None)
+            if self.preconditioner_type is None and self.enable_preconditioner:
+                raise ValueError("Preconditioner type must be defined in the input file.")
             self.number_iteration_max = DDM_parameters.get("max_iterations", 1000)
             if self.enable_preconditioner is not None and self.number_iteration_max is not None:
                 self._parameters_define = True
             schur_complement_computation = DDM_parameters.get("schur_complement_computation", None)
             if schur_complement_computation is not None:
                 self.type_schur_complement_computation = schur_complement_computation.get("type", None)
-                if not self.type_schur_complement_computation == "exact":
+                if not self.type_schur_complement_computation in ["exact", "FE2"]:
                     self.precision_greedy = schur_complement_computation.get("precision_greedy", None)
                     if self.precision_greedy is None:
                         raise ValueError("Precision for greedy algorithm must be defined in the input file.")
             else:
                 raise ValueError("Schur complement computation method must be defined in the input file.")
-
-        elif self.domain_decomposition_solver:
-            raise ValueError("DDM parameters must be defined in the input file if DDM solver is enabled.")
+        else:
+            if self.domain_decomposition_solver:
+                raise ValueError("Schur complement computation method must be defined in the input file.")
 
         self.boundary_conditions = lattice_parameters.get("boundary_conditions", {})
 
@@ -208,19 +374,38 @@ class LatticeSim(Lattice):
             List of surfaces to find points on cells (e.g., ["Xmin", "Xmax", "Ymin"]). If None, uses surfaceNames.
         """
         pointSet = self.find_point_on_lattice_surface(surfaces, surface_cells)
+        indexBoundaryList = {p.index_boundary for p in pointSet}
+        if not indexBoundaryList:
+            raise ValueError("No nodes found on the specified surfaces for constraint application.")
 
-        indexBoundaryList = {point.index_boundary for point in pointSet}
+        # Count how many TARGET boundary nodes are FREE on each requested DOF
+        # (so a total surface force is split only over DOFs that actually receive it)
+        targets_per_dof = {d: 0 for d in DOF}
+        seen = set()
+        for cell in self.cells:
+            for node in cell.points_cell:
+                ib = node.index_boundary
+                if ib is None or ib not in indexBoundaryList or ib in seen:
+                    continue
+                for d in DOF:
+                    if node.fixed_DOF[d] == 0:
+                        targets_per_dof[d] += 1
+                seen.add(ib)
 
-        for node in self.nodes:
-            if node.index_boundary in indexBoundaryList:
-                for val, DOFi in zip(value, DOF):
-                    if type_constraint == "Displacement":
-                        node.displacement_vector[DOFi] = val
-                        node.fix_DOF([DOFi])
-                    elif type_constraint == "Force":
-                        node.applied_force[DOFi] = val
-                    else:
-                        raise ValueError("Invalid type of constraint. Use 'Displacement' or 'Force'.")
+        for cell in self.cells:
+            for node in cell.points_cell:
+                ib = node.index_boundary
+                if ib in indexBoundaryList:
+                    for val, d in zip(value, DOF):
+                        if type_constraint == "Displacement":
+                            node.displacement_vector[d] = val
+                            node.fix_DOF([d])
+                        elif type_constraint == "Force":
+                            n_tgt = max(1, targets_per_dof[d])
+                            node.applied_force[d] = val / n_tgt
+                        else:
+                            raise ValueError("Invalid type of constraint. Use 'Displacement' or 'Force'.")
+
 
     def apply_force_surface(self, surfaceName: list[str], valueForce: list[float], DOF: list[int]) -> None:
         """
@@ -336,7 +521,7 @@ class LatticeSim(Lattice):
         globalDisplacementIndex = []
         processed_nodes = set()
         for cell in self.cells:
-            for node in cell.points_cell:
+            for node in self._sorted_nodes(cell.points_cell):
                 if node.index_boundary is not None and node.index_boundary not in processed_nodes:
                     for i in range(6):
                         if node.fixed_DOF[i] == 0 and not OnlyImposed:
@@ -353,6 +538,7 @@ class LatticeSim(Lattice):
         if self._verbose > 2:
             print("globalDisplacement: ", globalDisplacement)
             print("global_displacement_index: ", globalDisplacementIndex)
+        globalDisplacement = np.array(globalDisplacement)
         return globalDisplacement, globalDisplacementIndex
 
     @timing.timeit
@@ -391,26 +577,55 @@ class LatticeSim(Lattice):
             if appliedForceAdded and sum(node.applied_force) > 0:
                 for i in range(6):
                     if node.applied_force[i] != 0:
-                        globalReactionForce[node.index_boundary][i] = node.applied_force[i]
+                        globalReactionForce[node.index_boundary][i] += node.applied_force[i]
         return globalReactionForce
 
 
-    def get_global_reaction_force_without_fixed_DOF(self, globalReactionForce: dict, rightHandSide: bool = False) \
-            -> np.ndarray:
-        """
-        Get global reaction force of free degree of freedom
+    # def get_global_reaction_force_without_fixed_DOF(self, globalReactionForce: dict, rightHandSide: bool = False) \
+    #         -> np.ndarray:
+    #     """
+    #     Get global reaction force of free degree of freedom
+    #
+    #     Parameters:
+    #     -----------
+    #     globalReactionForce: dict
+    #         Dictionary of global reaction force with index_boundary as key and reaction force vector as value
+    #
+    #     Returns:
+    #     --------
+    #     globalReactionForceWithoutFixedDOF: np.ndarray
+    #         Array of global reaction force without fixed degree of freedom
+    #     """
+    #     y = np.zeros(self.free_DOF)
+    #     processed_nodes = set()
+    #
+    #     for cell in self.cells:
+    #         for node in cell.points_cell:
+    #             if node.index_boundary is None or node.index_boundary in processed_nodes:
+    #                 continue
+    #
+    #             for i in range(6):
+    #                 gi = node.global_free_DOF_index[i]
+    #                 if gi is None:
+    #                     continue
+    #                 if rightHandSide and node.applied_force[i] != 0:
+    #                     y[gi] = node.applied_force[i]
+    #                 else:
+    #                     y[gi] = globalReactionForce[node.index_boundary][i]
+    #
+    #             processed_nodes.add(node.index_boundary)
+    #
+    #     return y
 
-        Parameters:
-        -----------
-        globalReactionForce: dict
-            Dictionary of global reaction force with index_boundary as key and reaction force vector as value
-
-        Returns:
-        --------
-        globalReactionForceWithoutFixedDOF: np.ndarray
-            Array of global reaction force without fixed degree of freedom
+    def get_global_reaction_force_without_fixed_DOF(self, globalReactionForce: dict,
+                                                    rightHandSide: bool = False) -> np.ndarray:
         """
-        y = np.zeros(self.free_DOF)
+        Get vector on free DOFs:
+          - if rightHandSide=False -> return reactions on free DOFs
+          - if rightHandSide=True  -> return *only external applied forces* on free DOFs
+                                      (no fallback to reactions when no force is present)
+        """
+        y = np.zeros(self.free_DOF, dtype=float)
         processed_nodes = set()
 
         for cell in self.cells:
@@ -422,10 +637,13 @@ class LatticeSim(Lattice):
                     gi = node.global_free_DOF_index[i]
                     if gi is None:
                         continue
-                    if rightHandSide and node.applied_force[i] != 0:
-                        y[gi] = node.applied_force[i]
+
+                    if rightHandSide:
+                        # Strictly take the applied forces; zeros where none.
+                        y[gi] = float(node.applied_force[i])
                     else:
-                        y[gi] = globalReactionForce[node.index_boundary][i]
+                        # Reactions (e.g., due to imposed displacements)
+                        y[gi] = float(globalReactionForce[node.index_boundary][i])
 
                 processed_nodes.add(node.index_boundary)
 
@@ -571,43 +789,188 @@ class LatticeSim(Lattice):
                 surface_cells = data.get("SurfaceCells", None)
                 self.apply_constraints_nodes(data["Surface"], data["Value"], numeric_DOFs, key, surface_cells)
 
+    # def calculate_schur_complement_cells(self):
+    #     """
+    #     Calculate the Schur complement for each cell in the lattice.
+    #     Save the result in the cell.schur_complement attribute.
+    #     """
+    #     schur_cache: dict = {}
+    #     nb_computed = 0
+    #     for cell in self.cells:
+    #         geom_key = tuple(cell.geom_types) if isinstance(cell.geom_types, list) else cell.geom_types
+    #         radius_key = tuple(round(float(r), 8) for r in cell.radii)
+    #
+    #         if geom_key not in schur_cache:
+    #             schur_cache[geom_key] = {}
+    #
+    #
+    #         if radius_key not in schur_cache[geom_key]:
+    #             nb_computed += 1
+    #             # Base Schur complement
+    #             if self.type_schur_complement_computation in ["exact", "FE2"]:
+    #                 S = get_schur_complement(self, cell.index)
+    #             elif self.type_schur_complement_computation in self.surrogate_model_implemented:
+    #                 S = self.get_schur_complement_from_reduced_basis(list(radius_key))
+    #             else:
+    #                 raise NotImplementedError("Not implemented schur complement computation method.")
+    #
+    #             dS_list = None
+    #             if self.enable_gradient_computing:
+    #                 if self.type_schur_complement_computation != "RBF":
+    #                     # Derivatives w.r.t. radii (finite-difference, central)
+    #                     dS_list = self._compute_schur_gradients(cell, list(radius_key))
+    #                 elif self.type_schur_complement_computation == "RBF":
+    #                     # Derivatives w.r.t. radii (via RBF gradients)
+    #                     dS_list = self._compute_schur_gradients_RBF(list(radius_key))
+    #                 else:
+    #                     raise NotImplementedError("Not implemented schur complement gradient computation method.")
+    #
+    #             # print(Fore.RED + "WARNING: Schur is not optimaly computed and stored, "  + Fore.RESET)
+    #             schur_cache[geom_key][radius_key] = {"S": S, "dS": dS_list}
+    #             if self._verbose > 1:
+    #                 print(f"Schur complement + grads computed for geom {geom_key} with radii {radius_key}.")
+    #         else:
+    #             S = schur_cache[geom_key][radius_key]["S"]
+    #             dS_list = schur_cache[geom_key][radius_key]["dS"]
+    #
+    #         cell.schur_complement = S
+    #         cell.schur_complement_gradient = dS_list
+    #     if self._verbose > 0:
+    #         print("Number of unique Schur complements computed:", nb_computed)
+
     def calculate_schur_complement_cells(self):
         """
         Calculate the Schur complement for each cell in the lattice.
-        Save the result in the cell.schur_complement attribute.
+        Batch all unique radius cases per geometry and compute them at once.
         """
         schur_cache: dict = {}
+        nb_computed = 0
 
+        # 1) Group cells by (geom_key, radius_key)
+        groups: dict = {}
         for cell in self.cells:
             geom_key = tuple(cell.geom_types) if isinstance(cell.geom_types, list) else cell.geom_types
             radius_key = tuple(round(float(r), 8) for r in cell.radii)
 
+            if geom_key not in groups:
+                groups[geom_key] = {}
+            groups[geom_key].setdefault(radius_key, []).append(cell)
+
+        # 2) For each geometry, batch-compute missing Schur complements
+        for geom_key, radius_map in groups.items():
             if geom_key not in schur_cache:
                 schur_cache[geom_key] = {}
 
-            if radius_key not in schur_cache[geom_key]:
-                # Base Schur complement
-                if self.type_schur_complement_computation == "exact":
-                    S = get_schur_complement(self, cell.index)
+            # Find which radius sets are not cached yet
+            missing_keys = [rk for rk in radius_map.keys() if rk not in schur_cache[geom_key]]
+            if missing_keys:
+                # Compute missing Schur complements
+                if self.type_schur_complement_computation in ["exact", "FE2"]:
+                    # No batch available -> compute one by one
+                    for rk in missing_keys:
+                        nb_computed += 1
+                        # Using the first cell with this (geom, radii) to get index
+                        ref_cell = radius_map[rk][0]
+                        S = get_schur_complement(self, ref_cell.index)
+                        dS_list = None
+                        if self.enable_gradient_computing:
+                            dS_list = self._compute_schur_gradients(ref_cell, list(rk))
+                        schur_cache[geom_key][rk] = {"S": S, "dS": dS_list}
+                        if self._verbose > 1:
+                            print(
+                                f"Schur complement (+ grads) computed (exact/FE2) for geom {geom_key} with radii {rk}.")
                 elif self.type_schur_complement_computation in self.surrogate_model_implemented:
-                    S = self.get_schur_complement_from_reduced_basis(list(radius_key))
+                    # Batch surrogate evaluation per geometry
+                    nb_computed += len(missing_keys)
+                    radii_batch = [list(rk) for rk in missing_keys]
+                    S_batch = self.get_schur_complement_from_reduced_basis_batch(radii_batch)  # (n_q, n, n)
+
+                    for rk, S in zip(missing_keys, S_batch):
+                        dS_list = None
+                        if self.enable_gradient_computing:
+                            if self.type_schur_complement_computation == "RBF":
+                                dS_list = self._compute_schur_gradients_RBF(list(rk))
+                            else:
+                                # fallback FD for other surrogates
+                                ref_cell = radius_map[rk][0]
+                                dS_list = self._compute_schur_gradients(ref_cell, list(rk))
+
+                        schur_cache[geom_key][rk] = {"S": S, "dS": dS_list}
+                        if self._verbose > 1:
+                            print(
+                                f"Schur complement (+ grads) computed (batch surrogate) for geom {geom_key} with radii {rk}.")
                 else:
                     raise NotImplementedError("Not implemented schur complement computation method.")
 
-                dS_list = None
-                if self.enable_gradient_computing:
-                    # Derivatives w.r.t. radii (finite-difference, central)
-                    dS_list = self._compute_schur_gradients(cell, list(radius_key))
+            # 3) Assign cached results to all cells
+            for rk, cells in radius_map.items():
+                S = schur_cache[geom_key][rk]["S"]
+                dS_list = schur_cache[geom_key][rk]["dS"]
+                for c in cells:
+                    c.schur_complement = S
+                    c.schur_complement_gradient = dS_list
 
-                schur_cache[geom_key][radius_key] = {"S": S, "dS": dS_list}
-                if self._verbose > 1:
-                    print(f"Schur complement + grads computed for geom {geom_key} with radii {radius_key}.")
-            else:
-                S = schur_cache[geom_key][radius_key]["S"]
-                dS_list = schur_cache[geom_key][radius_key]["dS"]
+        if self._verbose > 1:
+            print("Number of unique Schur complements computed:", nb_computed)
 
-            cell.schur_complement = S
-            cell.schur_complement_gradient = dS_list
+    def get_schur_complement_from_reduced_basis_batch(self, geometric_params_list: list[list[float]]) -> np.ndarray:
+        """
+        Vectorized version: compute Schur complements for many queries in one GEMM (faster than many GEMVs).
+
+        Parameters
+        ----------
+        geometric_params_list : list of list of float
+            Each inner list is a set of geometric parameters for one query.
+
+        Returns
+        -------
+        schur_batch : np.ndarray
+            Array of shape (n_queries, n_schur, n_schur) with Fortran-ordered per-matrix layout.
+        """
+        # 1) Build all alpha vectors and stack them as columns -> (n_alpha, n_queries)
+        alphas_list = []
+        t = self.type_schur_complement_computation
+
+        if t == "nearest_neighbor":
+            Xq = np.asarray(geometric_params_list, dtype=float)
+            _, indices = self.neigh_function.kneighbors(Xq)
+            alphas_list = [self.alpha_coefficients_greedy[i0] for i0 in indices[:, 0]]
+
+        elif t == "linear":
+            alphas_list = [self.evaluate_alphas_linear_surrogate(gp) for gp in geometric_params_list]
+
+        elif t == "RBF":
+            if self.radial_basis_function is None:
+                self._define_radial_basis_functions()
+            Xq = np.asarray(geometric_params_list, dtype=float)
+            alphas_list = self.radial_basis_function.evaluate(Xq).squeeze()
+            if alphas_list.ndim == 1:
+                alphas_list = alphas_list[None, :]  # (1, n_queries) if degenerate
+
+            # convert to list of 1D arrays for consistency below
+            alphas_list = [alphas_list[i, :] for i in range(alphas_list.shape[0])]
+
+        else:
+            raise NotImplementedError("Not implemented schur complement computation method.")
+
+        A = np.column_stack([np.asarray(a, dtype=float) for a in alphas_list])  # (n_alpha, n_queries)
+
+        # 2) Single GEMM: (n_schur^2, n_alpha) @ (n_alpha, n_queries) -> (n_schur^2, n_queries)
+        basis = self.reduce_basis_dict["basis_reduced_ortho"]
+        basisF = np.asfortranarray(basis)  # BLAS-friendly
+        S_flat = basisF @ A  # GEMM, fast path
+
+        # 3) Reshape each column to (n_schur, n_schur) with Fortran order
+        if self.shape_schur_complement is None:
+            self.shape_schur_complement = int(sqrt(S_flat.shape[0]))
+        n = self.shape_schur_complement
+        n_q = S_flat.shape[1]
+
+        schur_batch = np.empty((n_q, n, n), dtype=S_flat.dtype, order="C")
+        for j in range(n_q):
+            schur_batch[j] = S_flat[:, j].reshape((n, n), order="F")
+
+        return schur_batch
 
     def get_schur_complement_from_reduced_basis(self, geometric_params: list[float]) -> np.ndarray:
         """
@@ -623,30 +986,31 @@ class LatticeSim(Lattice):
         schur_complement_approx: np.ndarray
             Approximated Schur complement
         """
+        import time
+        time_schur = time.time()
         # Evaluate alpha coefficients based on the chosen surrogate method
         if self.type_schur_complement_computation == "nearest_neighbor":
-            neigh = NearestNeighbors(n_neighbors=1, algorithm='auto')
-            neigh.fit(self.reduce_basis_dict["list_elements"])
-            distances, indices = neigh.kneighbors(np.array(geometric_params).reshape(1, -1))
+            distances, indices = self.neigh_function.kneighbors(np.array(geometric_params).reshape(1, -1))
             alphas = self.alpha_coefficients_greedy[indices[0][0]]
         elif self.type_schur_complement_computation == "linear":
             alphas = self.evaluate_alphas_linear_surrogate(geometric_params)
         elif self.type_schur_complement_computation == "RBF":
             if self.radial_basis_function is None:
                 self._define_radial_basis_functions()
-            alphas = self.radial_basis_function(np.array(geometric_params).reshape(1, -1)).squeeze()
+            alphas = self.radial_basis_function.evaluate(np.array(geometric_params).reshape(1, -1)).squeeze()
         else:
             raise NotImplementedError("Not implemented schur complement computation method.")
-
+        print("Time to get alphas:", time.time() - time_schur)
         # Reconstruct Schur complement
         schur_complement_approx = self.reduce_basis_dict["basis_reduced_ortho"] @ alphas
+        print("Time to get Schur:", time.time() - time_schur)
         if self.shape_schur_complement is None:
             self.shape_schur_complement = int(sqrt(schur_complement_approx.shape[0]))
         schur_complement_approx_reshape = schur_complement_approx.reshape(
             (self.shape_schur_complement, self.shape_schur_complement), order='F')
+        print("Time to get Schur reshaped:", time.time() - time_schur)
 
         return schur_complement_approx_reshape
-
 
     def _compute_schur_gradients(self, cell: "Cell", radii_params: list[float]) -> list[np.ndarray]:
         """
@@ -679,9 +1043,40 @@ class LatticeSim(Lattice):
             S_m = self._schur_for_params(cell, rm)
 
             dS = (S_p - S_m) / (rp[j] - rm[j])
+
             grads.append(dS)
 
         return grads
+
+    def _compute_schur_gradients_RBF(self, radii_params: list[float]) -> list[np.ndarray]:
+        """
+        Compute the gradients of the Schur complement efficiently using RBF interpolation class.
+
+        Parameters
+        ----------
+        radii_params : list[float]
+            Current radii for this cell's beam types.
+        """
+        grad_alpha = self.radial_basis_function.gradient(radii_params)  # (d, m)
+
+        B = np.asarray(self.reduce_basis_dict["basis_reduced_ortho"], float)  # (nS, m)
+        nS = B.shape[0]
+        # taille carrée de S
+        shapeS = self.shape_schur_complement
+        if shapeS is None:
+            shapeS = int(np.sqrt(nS))
+            self.shape_schur_complement = shapeS
+
+        grads_rbf = []
+        for j in range(len(radii_params)):
+            dalpha = np.asarray(grad_alpha[j], float)  # (m,)
+            dS_vec = B @ dalpha  # (nS,)
+            dS_mat = dS_vec.reshape((shapeS, shapeS), order='F')  # même ordre que pour S
+            grads_rbf.append(dS_mat)
+
+        return grads_rbf
+
+
 
     def _schur_for_params(self, cell: "Cell", radii_params: list[float]) -> np.ndarray:
         """
@@ -761,7 +1156,8 @@ class LatticeSim(Lattice):
     def _define_radial_basis_functions(self):
         mu_train = np.array(self.reduce_basis_dict["list_elements"])  # shape (N, d)
         alpha_train = np.array(self.alpha_coefficients_greedy)  # shape (N, m)
-        self.radial_basis_function = RBFInterpolator(mu_train, alpha_train, kernel='thin_plate_spline')
+        self.radial_basis_function = ThinPlateSplineRBF(mu_train, alpha_train)
+
 
     def define_parameters(self, enable_precondioner: bool = True, numberIterationMax: int = 1000):
         """
@@ -788,6 +1184,8 @@ class LatticeSim(Lattice):
         """
         Solve the problem with the domain decomposition method.
         """
+        import time
+        start_time = time.time()
         self._check_parameters_defined()
 
         # Free DOF
@@ -801,11 +1199,20 @@ class LatticeSim(Lattice):
 
         # Calculate b
         if self._verbose > -1:
-            print(Fore.GREEN + "Calculate right-hand side" + Style.RESET_ALL)
-        globalDisplacement, _ = self.get_global_displacement_DDM()
+            print(Fore.GREEN + "Assemble right-hand side" + Style.RESET_ALL)
 
-        b = self.calculate_reaction_force_global(globalDisplacement, rightHandSide=True)
-        b = -b # Change sign to have the right-hand side
+        # Reactions induced by imposed (Dirichlet) displacements on the boundary
+        r_free = self.calculate_reaction_force_global(np.zeros(self.free_DOF, dtype=float), rightHandSide=False)
+
+        # External applied forces on free DOFs
+        f_free = self.get_global_reaction_force_without_fixed_DOF(
+            self.get_global_reaction_force(appliedForceAdded=True), rightHandSide=True)
+
+        b = f_free - r_free
+        if np.linalg.norm(b) == 0:
+            print(Fore.YELLOW + "No external forces or imposed displacements in the lattice. Process aborted."+
+                  Style.RESET_ALL)
+            return None, None, None, None
 
         # Initialize local displacement to zero
         self._initialize_displacement()
@@ -819,13 +1226,13 @@ class LatticeSim(Lattice):
         print(Fore.GREEN + "Conjugate Gradient started."+ Style.RESET_ALL)
 
         tol = 1e-6
-        mintol = 1e-5
-        restart_every = 50
+        mintol = 1e-12
+        restart_every = 500000
         alpha_max = 100
         xsol, info = conjugate_gradient_solver(A_operator, b, M = self.preconditioner, maxiter=self.number_iteration_max,
                                                tol = tol, mintol = mintol, restart_every = restart_every, alpha_max= alpha_max,
                                                callback=lambda xk: self.cg_progress(xk, b, A_operator))
-
+        print(f"Conjugate Gradient finished in {time.time() - start_time:.2f} seconds.")
         if self._verbose > -1:
             if info == 0:
                 print(Fore.GREEN + "Conjugate Gradient converged."+ Style.RESET_ALL)
@@ -836,6 +1243,8 @@ class LatticeSim(Lattice):
 
         # Reset boundary conditions
         self.set_boundary_conditions()
+
+        xsol, globalDisplacementIndex = self.get_global_displacement()
         return xsol, info, self.global_displacement_index, b
 
     def calculate_reaction_force_global(self, globalDisplacement, rightHandSide:bool = False):
@@ -889,16 +1298,20 @@ class LatticeSim(Lattice):
 
         # Check displacement null
         displacement_cell = cell.get_displacement_at_nodes(cell.node_in_order_simulation)
-        if np.sum(displacement_cell) != 0:
-            # Solve the local problem
-            displacement = np.array(displacement_cell).flatten()
-            reaction_force_cell = np.dot(cell.schur_complement, displacement)
-            reaction_force_cell = reaction_force_cell.reshape(-1, 6)
+        if self.type_schur_complement_computation != "FE2":
+            if np.sum(displacement_cell) != 0:
+                # Solve the local problem
+                displacement = np.array(displacement_cell).flatten()
+                reaction_force_cell = np.dot(cell.schur_complement, displacement)
+                reaction_force_cell = reaction_force_cell.reshape(-1, 6)
+            else:
+                # If displacement is null, set reaction force to zero
+                reaction_force_cell = displacement_cell
+                if self._verbose > 1:
+                    print("Displacement is null")
         else:
-            # If displacement is null, set reaction force to zero
-            reaction_force_cell = displacement_cell
-            if self._verbose > 1:
-                print("Displacement is null")
+            simulation_model = solve_FEM_cell(self, cell)
+            reaction_force_cell = simulation_model.calculate_reaction_force_and_moment_all_boundary_nodes(cell)[0]
         return reaction_force_cell
 
     def cg_progress(self, xk, b, A_operator):
@@ -924,14 +1337,6 @@ class LatticeSim(Lattice):
         plotting = False
         # Increment iteration count
         self.iteration += 1
-
-        # Calculate the residual norm
-        residual = b - A_operator @ xk
-        residual_norm = np.linalg.norm(residual) / np.linalg.norm(b)
-
-        # Append the residual norm for tracking
-        self.residuals.append(residual_norm)
-        print(f"Residual norm: {residual_norm:.6e}")
 
         if plotting:
             # Calculate the residual norm
@@ -960,6 +1365,25 @@ class LatticeSim(Lattice):
                 # Append the residual norm for tracking
                 self.residuals.append(residual_norm)
                 print(f"Residual norm: {residual_norm:.6e}")
+
+    def _define_preconditioner_approximation(self):
+        path_dataset_schur = Path(__file__).parents[2] / "data" / "outputs" / "schur_complement"
+        geom_type_str = "_" + "_".join(str(gt) for gt in self.geom_types)
+
+        if self.preconditioner_type == "mean":
+            name_file = Path("Schur_complement_mean" + geom_type_str)
+        elif self.preconditioner_type == "nearest_reference":
+            name_file = Path("Schur_complement" + geom_type_str)
+        elif self.preconditioner_type == "exact":
+            return # no precomputed data needed
+        else:
+            raise NotImplementedError("Not implemented preconditioner approximation method.")
+
+        if name_file.suffix.lower() != ".npz":
+            name_file = name_file.with_suffix(".npz")
+
+        path_file = path_dataset_schur / name_file
+        self.used_schur_preconditioner = np.load(path_file, allow_pickle=True)
 
     def define_preconditioner(self):
         """
@@ -990,9 +1414,24 @@ class LatticeSim(Lattice):
         # Fast assembly via triplet accumulation
         rows_acc, cols_acc, data_acc = [], [], []
         n = self.free_DOF
+        if not self.preconditioner_type in ["mean", "nearest_reference"]:
+            print(Fore.YELLOW + "Preconditioner exact is used." + Style.RESET_ALL)
+
+        neigh = None
+        if self.preconditioner_type == "nearest_reference":
+            neigh = NearestNeighbors(n_neighbors=1, algorithm='auto')
+            neigh.fit(self.used_schur_preconditioner["radius_values"])
 
         for cell in self.cells:
-            local = cell.build_local_preconditioner().tocoo()
+            if self.preconditioner_type == "mean":
+                schur_matrices = self.used_schur_preconditioner["schur_matrices"]
+            elif self.preconditioner_type == "nearest_reference":
+                _, radii_nearest = neigh.kneighbors(np.array(cell.radii).reshape(1, -1))
+                schur_matrices = self.used_schur_preconditioner["schur_matrices"][radii_nearest[0][0]]
+            else:
+                schur_matrices = cell.schur_complement
+
+            local = cell.build_local_preconditioner(schur_matrices).tocoo()
             rows_acc.append(local.row)
             cols_acc.append(local.col)
             data_acc.append(local.data)
@@ -1033,6 +1472,7 @@ class LatticeSim(Lattice):
     def reset_cell_with_new_radii(self, new_radii: list[float], index_cell: int = 0) -> None:
         """
         Reset a cell with new radii for each beam type
+        WARNING: BUG for multiple geometry cells
 
         Parameters:
         ------------
@@ -1087,7 +1527,12 @@ class LatticeSim(Lattice):
         self.beams.update(new_cell.beams_cell)
         self.nodes.update(new_cell.points_cell)
 
-        # Refresh all data
+        # IMPORTANT for hybrid cells: rebuild split segments created by geometry collisions
+        if len(self.geom_types) > 1:
+            self.check_hybrid_collision()
+            self._refresh_nodes_and_beams()
+
+        # Refresh all data (after potential hybrid collision updates)
         self.define_beam_node_index()
         self.define_cell_index()
         self.define_cell_neighbours()
@@ -1112,10 +1557,45 @@ class LatticeSim(Lattice):
         self.iteration = 0
         self.residuals = []
 
-    def reset_penalized_beams(self):
+    def get_global_force_displacement_curve(self, dof: int = 2) -> tuple[np.ndarray, np.ndarray]:
         """
-        Reset the penalized beams in the lattice.
+        Aggregate global force (sum of reactions) vs imposed displacement for comparison with experiment.
+
+        Parameters
+        ----------
+        dof : int
+            Degree of freedom to extract (default=2 for Z direction).
+
+        Returns
+        -------
+        disp : np.ndarray
+            Imposed displacement values (at the loading boundary nodes).
+        force : np.ndarray
+            Total reaction force corresponding to that displacement.
         """
+        disp_list = []
+        force_list = []
+
+        seen = set()
         for cell in self.cells:
-            cell.reset_beam_modification()
-        print(Fore.GREEN + "Penalized beams have been reset." + Style.RESET_ALL)
+            for node in cell.points_cell:
+                if node.index_boundary is None or node in seen:
+                    continue
+
+                # Only keep nodes with applied BC
+                if any(node.applied_force) or any(node.fixed_DOF):
+                    # Get imposed displacement in DOF
+                    disp_list.append(node.displacement_vector[dof])
+                    # Sum reaction force on that DOF
+                    force_list.append(node.reaction_force_vector[dof])
+                seen.add(node)
+
+        disp = np.asarray(disp_list, dtype=float)
+
+        force_arr = np.asarray(force_list, dtype=float)
+
+        force = np.sum(abs(force_arr), axis=0)
+
+        return disp, force
+
+
