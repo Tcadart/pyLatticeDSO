@@ -26,13 +26,13 @@ These parameters are used for creating basic lattice structures.
 | `enable_randomness` | `geometry.enable_randomness` | bool | Enable randomness in radius selection (optional, default: false) |
 | `range_radius` | `geometry.range_radius` | list[float] | Range for random radius [min, max] (optional, default: [0.01, 0.1]) |
 | `randomness_hybrid` | `geometry.randomness_hybrid` | bool | Enable randomness in hybrid cell types (optional, default: false) |
-| `radius.rule` | `gradient.radius.rule` | str | Gradient rule for radius ("constant", "linear") (optional, default: "constant") |
-| `radius.direction_x` | `gradient.radius.direction_x` | bool | Apply gradient in X direction (optional, default: false) |
-| `radius.direction_y` | `gradient.radius.direction_y` | bool | Apply gradient in Y direction (optional, default: false) |
-| `radius.direction_z` | `gradient.radius.direction_z` | bool | Apply gradient in Z direction (optional, default: false) |
-| `radius.parameter_x` | `gradient.radius.parameter_x` | float | Gradient parameter for X direction (optional, default: 0.0) |
-| `radius.parameter_y` | `gradient.radius.parameter_y` | float | Gradient parameter for Y direction (optional, default: 0.0) |
-| `radius.parameter_z` | `gradient.radius.parameter_z` | float | Gradient parameter for Z direction (optional, default: 0.0) |
+| `radii.rule` | `gradient.radii.rule` | str | Gradient rule for radii ("constant", "linear") (optional, default: "constant") |
+| `radii.direction_x` | `gradient.radii.direction_x` | bool | Apply gradient in X direction (optional, default: false) |
+| `radii.direction_y` | `gradient.radii.direction_y` | bool | Apply gradient in Y direction (optional, default: false) |
+| `radii.direction_z` | `gradient.radii.direction_z` | bool | Apply gradient in Z direction (optional, default: false) |
+| `radii.parameter_x` | `gradient.radii.parameter_x` | float | Gradient parameter for X direction (optional, default: 0.0) |
+| `radii.parameter_y` | `gradient.radii.parameter_y` | float | Gradient parameter for Y direction (optional, default: 0.0) |
+| `radii.parameter_z` | `gradient.radii.parameter_z` | float | Gradient parameter for Z direction (optional, default: 0.0) |
 | `cell_dimension.rule` | `gradient.cell_dimension.rule` | str | Gradient rule for cell dimensions (optional, default: "constant") |
 | `cell_dimension.direction_x` | `gradient.cell_dimension.direction_x` | bool | Apply gradient in X direction (optional, default: false) |
 | `cell_dimension.direction_y` | `gradient.cell_dimension.direction_y` | bool | Apply gradient in Y direction (optional, default: false) |
@@ -117,7 +117,7 @@ These parameters extend the LatticeSim parameters with optimization-specific set
     "geom_types": ["Octahedron"]
   },
   "gradient": {
-    "radius": {
+    "radii": {
       "rule": "linear",
       "direction_y": true,
       "parameter_y": 1.01
@@ -192,3 +192,7 @@ These parameters extend the LatticeSim parameters with optimization-specific set
 - All numeric values should be appropriate for the physical context (e.g., positive values for dimensions)
 - String values for surfaces: "Xmin", "Xmax", "Ymin", "Ymax", "Zmin", "Zmax"
 - String values for DOF: "X", "Y", "Z", "RX", "RY", "RZ"
+
+### Important Note on Gradient Radii Parameter
+
+The code expects `gradient.radii` (plural), although some example files may use `gradient.radius` (singular). For consistency with the code, use `gradient.radii` in your JSON configuration files.
