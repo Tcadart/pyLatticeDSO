@@ -5,7 +5,7 @@ This document provides a comprehensive reference for all possible JSON input par
 ## Table of Contents
 1. [Lattice (Design) Parameters](#lattice-design-parameters)
 2. [LatticeSim (Simulation) Parameters](#latticesim-simulation-parameters)
-3. [LatticeOpti (Optimization) Parameters](#latticeepti-optimization-parameters)
+3. [LatticeOpti (Optimization) Parameters](#latticeOpti-optimization-parameters)
 
 ---
 
@@ -196,3 +196,7 @@ These parameters extend the LatticeSim parameters with optimization-specific set
 ### Important Note on Gradient Radii Parameter
 
 The code expects `gradient.radii` (plural), although some example files may use `gradient.radius` (singular). For consistency with the code, use `gradient.radii` in your JSON configuration files.
+
+### Note on "suplementary" Spelling
+
+The JSON key is spelled `suplementary` (with one 'p') in the codebase, not `supplementary` (with two 'p's). This documentation reflects the actual implementation.
