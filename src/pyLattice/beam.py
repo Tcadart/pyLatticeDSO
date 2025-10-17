@@ -1,21 +1,22 @@
-"""
-# beam.py
-"""
+# =============================================================================
+# CLASS: Beam
+# =============================================================================
 
 from typing import List, Tuple, Optional
 import math
-
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .cell import Cell
 
+from .timing import timing
 from .point import Point
 from .utils import function_penalization_Lzone, _discard
 
 
 class Beam(object):
     """
-    Class Beam represents a beam element in lattice structures.
+    Class Beam represents a beam element defined by two endpoints (Point objects), a radius, material index, type,
+    and the cells it belongs to.
     """
 
     def __init__(self, point1: 'Point', point2: 'Point', radius: float, material: int, type_beam: int,
@@ -25,13 +26,28 @@ class Beam(object):
 
         Parameters:
         ----------
-        point1 (Point): The first endpoint of the beam.
-        point2 (Point): The second endpoint of the beam.
-        radius (float): The radius of the beam.
-        material (int): The material index of the beam.
-        type_beam (int): The type of the beam.
-        cell_belongings (Cell): The cell to which the beam belongs.
+        point1 : Point
+            The first endpoint of the beam.
+        point2 : Point
+            The second endpoint of the beam.
+        radius : float
+            The radius of the beam.
+        material : int
+            The material index of the beam.
+        type_beam : int
+            The type of the beam (e.g., 1 for standard, 2 for modified beam types).
+        cell_belongings : Cell or list of Cell
+            The cell(s) to which the beam belongs.
         """
+        if point1 is point2:
+            raise ValueError("A beam cannot have the same point for both endpoints.")
+        if radius <= 0:
+            raise ValueError("Radius must be a positive value.")
+        if type_beam not in [1, 2]:
+            raise ValueError("type_beam must be either 1 or 2.")
+        if not isinstance(material, int) or material < 0:
+            raise ValueError("material must be a non-negative integer.")
+
         self.point1: 'Point' = point1
         self.point2: 'Point' = point2
         self.radius: float = radius
@@ -41,17 +57,30 @@ class Beam(object):
             self.cell_belongings: list['Cell'] = [cell_belongings]
         else:
             self.cell_belongings: list['Cell'] = cell_belongings
+        self.length: float = self.get_length()
+        self.volume: float = self.get_volume(section_type="circular")
+
+        # Attributes for simulation
         self.index: Optional[int] = None
         self.angle_point_1: dict = {"radius": None, "angle": None, "L_zone": None}
         self.angle_point_2: dict = {"radius": None, "angle": None, "L_zone": None}
-        self.length: float = self.get_length()
-        self.volume: float = self.get_volume(sectionType="circular")
         self.beam_mod: bool = False
+        self.penalization_coefficient: float = 1.5  # Fixed (See publication Cadart et al. 2025)
         self.associated_beams_mod: List['Beam'] = []
-        self.penalization_coefficient: float = 1.5  # Fixed with previous optimization
         self.initial_radius: Optional[float] = None
 
-    def destroy(self, check_orphan_nodes:bool = True) -> None:
+    def __repr__(self) -> str:
+        return f"Beam({self.point1}, {self.point2}, radii:{self.radius}, Type:{self.type_beam}, Index:{self.index})"
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    @timing.category("design")
+    @timing.timeit
+    def destroy(self) -> None:
         """
         Delete the beam and clean up references in points and cells.
         This method removes the beam from its associated cells and points.
@@ -73,30 +102,29 @@ class Beam(object):
             if not cb:
                 p.destroy()
 
-    def __repr__(self) -> str:
-        return f"Beam({self.point1}, {self.point2}, radii:{self.radius}, Type:{self.type_beam}, Index:{self.index})"
-
-    def __eq__(self, other: object) -> bool:
-        return self is other
-
-    def __hash__(self) -> int:
-        return id(self)
-
     @property
     def data(self) -> List[int]:
         """
         Property to retrieve beam data for exporting.
 
         Returns:
+        -------
             List[int]: [beam_index, point1_index, point2_index, beam_type].
         """
         return [self.index, self.point1.index, self.point2.index, self.type_beam]
 
+# =============================================================================
+# SECTION: Design Methods
+# =============================================================================
+
+    @timing.category("design")
+    @timing.timeit
     def get_length(self) -> float:
         """
         Calculate the length of the beam.
 
         Returns:
+        -------
             float: Length of the beam.
         """
         x1, y1, z1 = self.point1.x, self.point1.y, self.point1.z
@@ -104,19 +132,72 @@ class Beam(object):
         length = round(math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2 + (z2 - z1) ** 2), 4)
         return length
 
-    def get_volume(self, sectionType: str = "circular") -> float:
+    @timing.category("design")
+    @timing.timeit
+    def get_volume(self, section_type: str = "circular") -> float:
         """
         Calculate the volume of the beam in case of a circular section.
 
-        Args:
-            sectionType (str): Type of the beam section. Currently only "circular" is supported.
+        Parameters:
+        ----------
+        sectionType : str
+            The type of the beam section. Currently only "circular" is supported.
+
         Returns:
+        -------
             float: Volume of the beam.
         """
-        if sectionType.lower() != "circular":
+        if section_type.lower() != "circular":
             raise ValueError("Currently only circular section type_beam is supported.")
         return math.pi * (self.radius ** 2) * self.length
 
+    @timing.category("design")
+    @timing.timeit
+    def is_identical_to(self, other: "Beam", tol:float = 1e-9) -> bool:
+        """
+        Check if this beam is identical to another beam.
+
+        Parameters
+        ----------
+        other : Beam
+            The other beam to compare with.
+        tol : float
+            Tolerance for floating-point comparisons.
+        """
+        if not isinstance(other, Beam):
+            return False
+        if not math.isclose(self.radius, other.radius, rel_tol=1e-8, abs_tol=tol):
+            return False
+        if self.material != other.material or self.type_beam != other.type_beam:
+            return False
+
+        def _pt_close(a: "Point", b: "Point") -> bool:
+            return (math.isclose(a.x, b.x, abs_tol=tol) and
+                    math.isclose(a.y, b.y, abs_tol=tol) and
+                    math.isclose(a.z, b.z, abs_tol=tol))
+
+        same_order = _pt_close(self.point1, other.point1) and _pt_close(self.point2, other.point2)
+        swap_order = _pt_close(self.point1, other.point2) and _pt_close(self.point2, other.point1)
+        return same_order or swap_order
+
+    def add_cell_belonging(self, cell: "Cell") -> None:
+        """
+        Add a cell to the beam's belongings if not already present.
+
+        Parameters:
+        ----------
+        cell : Cell
+            The cell to add to the beam's belongings.
+        """
+        if cell not in self.cell_belongings:
+            self.cell_belongings.append(cell)
+
+# =============================================================================
+# SECTION: Simulation Methods
+# =============================================================================
+
+    @timing.category("simulation")
+    @timing.timeit
     def get_angle_between_beams(self, other: 'Beam', periodicity: bool) -> float:
         """
         Calculates the angle between two beams
@@ -195,14 +276,19 @@ class Beam(object):
         """
         Calculate the coordinates of a point on the beam at a specific distance from an endpoint.
 
-        Args:
-            distance (float): Distance from the specified endpoint.
-            start_point (int): Index of the endpoint (1 for point1, 2 for point2).
+        Parameters:
+        ----------
+        distance : float
+            The distance from the specified endpoint along the beam.
+        start_point : int
+            The index of the starting point (1 or 2) from which the distance is measured
 
         Returns:
+        -------
             List[float]: Coordinates [x, y, z] of the calculated point.
 
         Raises:
+        -------
             ValueError: If the point index is not 1 or 2.
         """
         if start_point == 1:
@@ -236,14 +322,19 @@ class Beam(object):
 
         return point_mod
 
+    @timing.category("simulation")
+    @timing.timeit
     def is_point_on_beam(self, node: 'Point') -> bool:
         """
         Check if a given node lies on the beam.
 
-        Args:
-            node (Point): The point to check.
+        Parameters:
+        ----------
+        node : Point
+            The node to check.
 
         Returns:
+        -------
             bool: True if the node lies on the beam, False otherwise.
         """
         vector1 = (self.point2.x - self.point1.x, self.point2.y - self.point1.y, self.point2.z - self.point1.z)
@@ -265,6 +356,8 @@ class Beam(object):
         else:
             return False
 
+    @timing.category("simulation")
+    @timing.timeit
     def set_angle(self, radius: float, angle: float, point: "Point") -> None:
         """
         Assign angle and radius data to one of the beam's endpoints.
@@ -295,6 +388,7 @@ class Beam(object):
         Calculate the modification length for the penalization method.
 
         Returns:
+        -------
             Tuple[float, float]: Length modifications for point1 and point2.
         """
         L1 = self.angle_point_1["L_zone"]
@@ -322,8 +416,10 @@ class Beam(object):
         """
         Change the radius of the beam.
 
-        Args:
-            new_radius (float): The new radius to set for the beam.
+        Parameters
+        ----------
+        new_radius : float
+            The new radius to set for the beam.
         """
         if new_radius <= 0:
             raise ValueError("Radius must be a positive value.")
@@ -332,34 +428,4 @@ class Beam(object):
         else:
             self.radius = new_radius
 
-    def is_identical_to(self, other: "Beam", tol:float =1e-9) -> bool:
-        """
-        Check if this beam is identical to another beam.
 
-        Parameters
-        ----------
-        other : Beam
-            The other beam to compare with.
-        tol : float
-            Tolerance for floating-point comparisons.
-        """
-        if not isinstance(other, Beam):
-            return False
-        if not math.isclose(self.radius, other.radius, rel_tol=1e-8, abs_tol=tol):
-            return False
-        if self.material != other.material or self.type_beam != other.type_beam:
-            return False
-
-        def _pt_close(a: "Point", b: "Point") -> bool:
-            return (math.isclose(a.x, b.x, abs_tol=tol) and
-                    math.isclose(a.y, b.y, abs_tol=tol) and
-                    math.isclose(a.z, b.z, abs_tol=tol))
-
-        same_order = _pt_close(self.point1, other.point1) and _pt_close(self.point2, other.point2)
-        swap_order = _pt_close(self.point1, other.point2) and _pt_close(self.point2, other.point1)
-        return same_order or swap_order
-
-    def add_cell_belonging(self, cell: "Cell") -> None:
-        """Adding a cell to the list of cells this beam belongs to."""
-        if cell not in self.cell_belongings:
-            self.cell_belongings.append(cell)

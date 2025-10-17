@@ -1,6 +1,6 @@
-"""
-point.py
-"""
+# =============================================================================
+# CLASS: Point
+# =============================================================================
 import math
 import random
 from typing import List, Tuple, Optional, TYPE_CHECKING

@@ -1,7 +1,6 @@
-"""
-cell.py
-"""
-import json
+# =============================================================================
+# CLASS: Cell
+# =============================================================================
 from typing import Iterable, Union, Optional, List
 from collections import OrderedDict
 
@@ -17,7 +16,7 @@ from .utils import _validate_inputs_cell
 
 class Cell(object):
     """
-    Define Cell data for lattice structure
+    Class representing a cell in the lattice structure.
     """
 
     def __init__(self, pos: list, initial_size: list, coordinate: list, geom_types: list[str],
@@ -87,6 +86,9 @@ class Cell(object):
             print(Fore.YELLOW + "WARNING: Approximated relative density of the cell is greater than 1. "
                                 "Beam radius and cell size is probably not well defined" + Style.RESET_ALL)
 
+    def __repr__(self) -> str:
+        return f"Cell(Coordinates:{self.coordinate}, Size: {self.size}, Index:{self.index})"
+
     def __del__(self):
         try:
             if hasattr(self, "dispose"):
@@ -143,9 +145,6 @@ class Cell(object):
                 pass
         except Exception:
             pass
-
-    def __repr__(self) -> str:
-        return f"Cell(Coordinates:{self.coordinate}, Size: {self.size}, Index:{self.index})"
 
     @property
     def volume(self):
@@ -239,10 +238,16 @@ class Cell(object):
 
         return corners
 
+# =============================================================================
+# SECTION: Design Methods
+# =============================================================================
+
+    @timing.category("design")
+    @timing.timeit
     def generate_cell_properties(self, initial_cell_size, beams_already_defined: Optional[set] = None,
                                  nodes_already_defined: Optional[set] = None):
         """
-        Generate a cell object with beams and nodes based on the lattice type_beam and radii.
+        Generate cell properties including beams and nodes.
 
         Parameters:
         -----------
@@ -259,14 +264,16 @@ class Cell(object):
                 if idxCell == 0:
                     self.get_beam_material()
                     beamRadius = self.get_radius(radius)
-                    self.get_cell_size(initial_cell_size)
+                    self.def_cell_size(initial_cell_size)
                     self.generate_beams(self.geom_types[idx], beamRadius, idx, beams_already_defined, nodes_already_defined)
-                    self.get_cell_center()
+                    self.def_cell_center()
                 else:
                     hybridRadius = self.get_radius(radius)
                     self.generate_beams(self.geom_types[idx], hybridRadius, idx, beams_already_defined, nodes_already_defined)
                 idxCell += 1
 
+    @timing.category("design")
+    @timing.timeit
     def generate_beams(self, latticeType: str, beamRadius: float, beamType: int = 0,
                        beams_already_defined: Optional[dict] = None, nodes_already_defined: Optional[dict] = None) \
             -> None:
@@ -354,20 +361,9 @@ class Cell(object):
             self.points_cell.add(p1)
             self.points_cell.add(p2)
 
-
     def get_beam_material(self) -> None:
         """
-        Get the material of the beam based on the gradient and position.
-
-        Parameters:
-        -----------
-        grad_mat: list
-            Gradient of the material
-
-        Returns:
-        ---------
-        materialType: int
-            Material index of the beam
+        Get the material of the beam based on the material gradient.
         """
         if self.grad_mat is None:
             self._beamMaterial = 0
@@ -380,14 +376,12 @@ class Cell(object):
 
         Parameters:
         -----------
-        grad_radius: list
-            Gradient of the radii
-        BaseRadius: float
-            Base radii of the beam
+        baseRadius: float
+            Base radius of the beam
 
         Returns:
         ---------
-        actualBeamRadius: float
+        beamRadius : float
             Calculated beam radii
         """
         if self.grad_radius is None:
@@ -398,20 +392,14 @@ class Cell(object):
                           self.grad_radius[self.pos[2]][2])
             return beamRadius
 
-    def get_cell_size(self, initial_cell_size: list) -> None:
+    def def_cell_size(self, initial_cell_size: list) -> None:
         """
         Calculate and return the cell size
 
         Parameters:
         -----------
-        initialCellSize: 3-array
-            Dimension of the initial cell without modification
-        grad_dim:
-
-        Returns:
-        ---------
-        size : float
-            Calculated beam radii
+        initial_cell_size: list
+            Initial size of the cell
         """
         if self.grad_dim is None:
             self.size = initial_cell_size
@@ -419,49 +407,11 @@ class Cell(object):
             self.size = [initial_size * self.grad_dim[pos][i] for i, (initial_size, pos) in
                          enumerate(zip(initial_cell_size, self.pos))]
 
-    def get_cell_center(self) -> None:
+    def def_cell_center(self) -> None:
         """
         Calculate the center point of the cell
         """
         self.center_point = [self.coordinate[i] + self.size[i] / 2 for i in range(3)]
-
-    def remove_beam(self, beam_to_delete: Union["Beam", Iterable["Beam"]]) -> None:
-        """
-        Removing beam from cell
-        """
-        if isinstance(beam_to_delete, Beam):
-            self.beams_cell.discard(beam_to_delete)
-        else:
-            for b in beam_to_delete:
-                self.beams_cell.discard(b)
-
-    def remove_point(self, point_to_delete: Union["Point", Iterable["Point"]]) -> None:
-        """
-        Removing point from cell
-        """
-        if isinstance(point_to_delete, Point):
-            self.points_cell.discard(point_to_delete)
-        else:
-            for p in point_to_delete:
-                self.points_cell.discard(p)
-
-    def add_beam(self, beam_to_add: Union["Beam", Iterable["Beam"]]) -> None:
-        """
-        Adding beam to cell
-        """
-        if isinstance(beam_to_add, Beam):
-            self.beams_cell.add(beam_to_add)
-        else:
-            self.beams_cell.update(beam_to_add)
-
-    def add_point(self, point_to_add: List["Point"] or "Point") -> None:
-        """
-        Adding point to cell
-        """
-        if isinstance(point_to_add, Point):
-            self.points_cell.add(point_to_add)
-        else:
-            self.points_cell.update(point_to_add)
 
     def get_point_on_surface(self, surfaceName: str) -> list:
         """
@@ -511,15 +461,144 @@ class Cell(object):
             if getattr(point, axis) == surface_value
         })
 
-    # REPLACE define_node_order_to_simulate with this version
+# =============================================================================
+# SECTION: Modification Methods
+# =============================================================================
+
+    @timing.category("design")
+    @timing.timeit
+    def remove_beam(self, beam_to_delete: Union["Beam", Iterable["Beam"]]) -> None:
+        """
+        Removing beam from cell
+
+        Parameters:
+        -----------
+        beam_to_delete: Beam or Iterable[Beam]
+            Beam or list of beams to remove from the cell
+        """
+        if isinstance(beam_to_delete, Beam):
+            self.beams_cell.discard(beam_to_delete)
+        else:
+            for b in beam_to_delete:
+                self.beams_cell.discard(b)
+
+    @timing.category("design")
+    @timing.timeit
+    def remove_point(self, point_to_delete: Union["Point", Iterable["Point"]]) -> None:
+        """
+        Removing point from cell
+
+        Parameters:
+        -----------
+        point_to_delete: Point or Iterable[Point]
+            Point or list of points to remove from the cell
+        """
+        if isinstance(point_to_delete, Point):
+            self.points_cell.discard(point_to_delete)
+        else:
+            for p in point_to_delete:
+                self.points_cell.discard(p)
+
+    @timing.category("design")
+    @timing.timeit
+    def add_beam(self, beam_to_add: Union["Beam", Iterable["Beam"]]) -> None:
+        """
+        Adding beam to cell
+
+        Parameters:
+        -----------
+        beam_to_add: Beam or Iterable[Beam]
+            Beam or list of beams to add to the cell
+        """
+        if isinstance(beam_to_add, Beam):
+            self.beams_cell.add(beam_to_add)
+        else:
+            self.beams_cell.update(beam_to_add)
+
+    @timing.category("design")
+    @timing.timeit
+    def add_point(self, point_to_add: List["Point"] or "Point") -> None:
+        """
+        Adding point to cell
+
+        Parameters:
+        -----------
+        point_to_add: Point or Iterable[Point]
+            Point or list of points to add to the cell
+        """
+        if isinstance(point_to_add, Point):
+            self.points_cell.add(point_to_add)
+        else:
+            self.points_cell.update(point_to_add)
+
+    @timing.category("design")
+    @timing.timeit
+    def add_cell_neighbour(self, direction: str, sign: str, neighbour_cell: "Cell") -> None:
+        """
+        Add a neighbour cell in a structured dict format.
+
+        Parameters
+        ----------
+        direction : str
+            One of "x", "y", "z"
+        sign : str
+            Either "positif" or "negatif"
+        neighbour_cell : Cell
+            Neighbour cell to add
+        """
+        if direction not in self.neighbour_cells:
+            self.neighbour_cells[direction] = {}
+
+        if sign not in self.neighbour_cells[direction]:
+            self.neighbour_cells[direction][sign] = neighbour_cell
+
+    @timing.category("design")
+    @timing.timeit
+    def get_all_cell_neighbours(self) -> list["Cell"]:
+        """
+        Get all neighbour cells in a flat list.
+
+        Returns
+        -------
+        list of Cell
+            List of all neighbour cells
+        """
+        neighbours = []
+        for direction in self.neighbour_cells:
+            for sign in self.neighbour_cells[direction]:
+                neighbours.append(self.neighbour_cells[direction][sign])
+        return neighbours
+
+    def refresh_from_global(self, all_beams: set["Beam"]) -> None:
+        """
+        Rebuild self.beams_cell and self.points_cell from the current lattice state.
+        Keeps only beams that still declare this cell as a belonging, and derives points from those beams.
+        """
+        live_beams = {
+            b for b in all_beams
+            if getattr(b, "cell_belongings", None) and self in b.cell_belongings
+        }
+        self.beams_cell = live_beams
+        self.points_cell = {p for b in live_beams for p in (b.point1, b.point2)}
+
+
+# =============================================================================
+# SECTION: Simulation Methods
+# =============================================================================
+
+    @timing.category("simulation")
+    @timing.timeit
     def define_node_order_to_simulate(self, face_priority: Optional[List[str]] = None, tol: float = 1e-9) -> None:
         """
-        Build a deterministic local ordering of boundary nodes
-        Strategy:
-          1) Classify each boundary node to one face in a priority order.
-          2) Within each face, sort lexicographically by the two in-plane coordinates, then by (x,y,z) for tie-break.
-          3) Concatenate faces to get the final order.
-        The resulting order is stored as a list of Points in self.node_in_order_simulation.
+        Define a deterministic order for boundary nodes to ensure consistent simulation results.
+
+        Parameters:
+        -----------
+        face_priority: Optional[List[str]]
+            List defining the priority order of faces to assign nodes to when they lie on multiple faces.
+            Default is ["Xmin", "Xmax", "Ymin", "Ymax", "Zmin", "Zmax"].
+        tol: float
+            Tolerance for determining if a point lies on a face. Default is 1e-9.
         """
         if face_priority is None:
             face_priority = ["Xmin", "Xmax", "Ymin", "Ymax", "Zmin", "Zmax"]
@@ -579,9 +658,16 @@ class Cell(object):
 
         self.node_in_order_simulation = ordered
 
+    @timing.category("simulation")
+    @timing.timeit
     def set_reaction_force_on_nodes(self, reactionForce: list) -> None:
         """
         Set reaction force on each boundary node in the established local order.
+
+        Parameters:
+        -----------
+        reactionForce: list
+            List of reaction force vectors corresponding to each boundary node.
         """
         if not self.node_in_order_simulation:
             raise ValueError("Boundary node order not defined. Call define_node_order_to_simulate() first.")
@@ -592,9 +678,20 @@ class Cell(object):
         for idx, node in enumerate(self.node_in_order_simulation):
             node.set_reaction_force(reactionForce[idx])
 
+    @timing.category("simulation")
+    @timing.timeit
     def get_displacement_at_nodes(self, nodeList: Union[List["Point"], "OrderedDict[int, Point]"]) -> list:
         """
         Return displacement vectors ordered consistently with the provided local list/dict of Points.
+
+        Parameters:
+        -----------
+        nodeList: list or OrderedDict
+            List or OrderedDict of Point objects representing the nodes.
+        Returns:
+        --------
+        list
+            List of displacement vectors for the nodes.
         """
         displacementList = []
         if isinstance(nodeList, list):
@@ -607,6 +704,8 @@ class Cell(object):
                     displacementList.append(node.displacement_vector)
         return displacementList
 
+    @timing.category("simulation")
+    @timing.timeit
     def set_displacement_at_boundary_nodes(self, displacementArray: list) -> None:
         """
         Set displacement at nodes.
@@ -628,15 +727,16 @@ class Cell(object):
                     if gi is not None:
                         point.displacement_vector[i] = displacementArray[gi]
 
-    def get_number_boundary_nodes(self) -> int:
-        """
-        Get the number of unique boundary nodes in the cell.
-        """
-        return len({p.index_boundary for p in self.points_cell if p.index_boundary is not None})
-
+    @timing.category("simulation")
+    @timing.timeit
     def build_coupling_operator(self, nb_free_DOF: int) -> None:
         """
         Build the coupling operator B using the deterministic local boundary-node order.
+
+        Parameters:
+        -----------
+        nb_free_DOF: int
+            Total number of free degrees of freedom in the global system.
         """
         if not self.node_in_order_simulation:
             self.define_node_order_to_simulate()
@@ -656,9 +756,16 @@ class Cell(object):
         nbBndDOFloc = len(self.node_in_order_simulation) * 6
         self.coupling_matrix_B = coo_matrix((data, (row, col)), shape=(nb_free_DOF, nbBndDOFloc))
 
+    @timing.category("simulation")
+    @timing.timeit
     def build_local_preconditioner(self, schur_mean = None) -> None:
         """
-        Efficiently compute B * S * B^T but only over the active global rows touched by B.
+        Build the local preconditioner matrix B^T * S * B
+
+        Parameters:
+        -----------
+        schur_mean: array-like or None
+            Schur complement matrix to use. If None, uses self.schur_complement.
         """
         from scipy.sparse import coo_matrix, csc_matrix, isspmatrix
 
@@ -697,9 +804,22 @@ class Cell(object):
 
         return coo_matrix((local_block.data, (row_idx, col_idx)), shape=(n_global, n_global))
 
+# =============================================================================
+# SECTION: Simulation getters methods
+# =============================================================================
+    @timing.category("simulation")
+    @timing.timeit
+    def get_number_boundary_nodes(self) -> int:
+        """
+        Get the number of unique boundary nodes in the cell.
+        """
+        return len({p.index_boundary for p in self.points_cell if p.index_boundary is not None})
+
+    @timing.category("simulation")
+    @timing.timeit
     def get_internal_energy(self) -> float:
         """
-        Get the internal energy of the cell
+        Get cell internal energy from all boundary points
         """
         min_energy = -1e-12
         internalEnergy = 0
@@ -712,6 +832,8 @@ class Cell(object):
                 internalEnergy += pointEnergy
         return internalEnergy
 
+    @timing.category("simulation")
+    @timing.timeit
     def get_displacement_data(self) -> list:
         """
         Build and return displacement data on cell for dataset generation
@@ -723,17 +845,41 @@ class Cell(object):
                     allBoundaryDisplacementData.append(point.displacement_vector)
         return allBoundaryDisplacementData
 
+    @timing.category("simulation")
+    @timing.timeit
+    def get_number_nodes_at_boundary(self):
+        """
+        Get the number of nodes at the boundary
+
+        Returns:
+        --------
+        int
+            Number of nodes at the boundary
+        """
+        counterNodes = 0
+        nodeAlreadyCounted = []
+        for beam in self.beams_cell:
+            for point in [beam.point1, beam.point2]:
+                if point.index_boundary is not None and point.index_boundary not in nodeAlreadyCounted:
+                    counterNodes += 1
+                    nodeAlreadyCounted.append(point.index_boundary)
+        return counterNodes
+
+# =============================================================================
+# SECTION: Optimization Methods
+# =============================================================================
+
+    @timing.category("optimization")
+    @timing.timeit
     def change_beam_radius(self, new_radius: list) -> None:
         """
-        ATTENTION: BEAM MOD IS NOT WORKING
+        WARNING: BEAM MOD IS NOT WORKING
         Change beam radii in the cell
 
         Parameters:
         -----------
         newRadius: list
             beam radii wanted to assign
-        hybridData: list
-            Hybrid data type_beam
         """
         if self._verbose > 1:
             print(Fore.RED + "WARNING: Beam modification is not implemented yet. " + Style.RESET_ALL)
@@ -748,7 +894,8 @@ class Cell(object):
 
         self.radii = new_radius
 
-
+    @timing.category("optimization")
+    @timing.timeit
     def get_relative_density_kriging(self, kriging_model) -> float:
         """
         Get the relative density of the cell using kriging model
@@ -761,7 +908,9 @@ class Cell(object):
         relative_density = kriging_model.predict(np.array([self.radii]))[0]
         return relative_density
 
-    def get_relative_density_gradient(self, relativeDensityPolyDeriv) -> float:
+    @timing.category("optimization")
+    @timing.timeit
+    def get_relative_density_gradient(self, relative_density_poly_deriv) -> float:
         """
         Get the gradient of the relative density
 
@@ -776,10 +925,12 @@ class Cell(object):
             Derivative of the relative density
         """
         deriv = 0
-        for idx, polyDeriv in enumerate(relativeDensityPolyDeriv):
+        for idx, polyDeriv in enumerate(relative_density_poly_deriv):
             deriv += polyDeriv(self.radii[idx])
         return deriv
 
+    @timing.category("optimization")
+    @timing.timeit
     def get_relative_density_gradient_kriging(self, model, geometries_types) -> np.ndarray:
         """
         Finite difference gradient of the relative density (predictive mean) w.r.t. the radii using the trained
@@ -801,6 +952,8 @@ class Cell(object):
             grad[idx] = (model.predict([perturbed_radii]) - model.predict([radii])) / epsilon
         return grad
 
+    @timing.category("optimization")
+    @timing.timeit
     def get_relative_density_gradient_kriging_exact(self, model, geometries_types) -> np.ndarray:
         """
         Exact gradient of the relative density (predictive mean) w.r.t. the radii using the trained
@@ -834,63 +987,15 @@ class Cell(object):
 
         return grad_local
 
-    def get_number_nodes_at_boundary(self):
-        """
-        Get the number of nodes at the boundary
+# =============================================================================
+# SECTION: Utils Methods
+# =============================================================================
 
-        Returns:
-        --------
-        int
-            Number of nodes at the boundary
-        """
-        counterNodes = 0
-        nodeAlreadyCounted = []
-        for beam in self.beams_cell:
-            for point in [beam.point1, beam.point2]:
-                if point.index_boundary is not None and point.index_boundary not in nodeAlreadyCounted:
-                    counterNodes += 1
-                    nodeAlreadyCounted.append(point.index_boundary)
-        return counterNodes
-
-    def get_RGBcolor_depending_of_radius(self):
+    def get_RGBcolor_depending_of_radius(self) -> tuple:
         """
         Get the RGB color of the cell depending on the radii.
         """
         return tuple(r / 0.1 for r in self.radii)
-
-    def add_cell_neighbour(self, direction: str, sign: str, neighbour_cell: "Cell") -> None:
-        """
-        Add a neighbour cell in a structured dict format.
-
-        Parameters
-        ----------
-        direction : str
-            One of "x", "y", "z"
-        sign : str
-            Either "positif" or "negatif"
-        neighbour_cell : Cell
-            Neighbour cell to add
-        """
-        if direction not in self.neighbour_cells:
-            self.neighbour_cells[direction] = {}
-
-        if sign not in self.neighbour_cells[direction]:
-            self.neighbour_cells[direction][sign] = neighbour_cell
-
-    def get_all_cell_neighbours(self) -> list["Cell"]:
-        """
-        Get all neighbour cells in a flat list.
-
-        Returns
-        -------
-        list of Cell
-            List of all neighbour cells
-        """
-        neighbours = []
-        for direction in self.neighbour_cells:
-            for sign in self.neighbour_cells[direction]:
-                neighbours.append(self.neighbour_cells[direction][sign])
-        return neighbours
 
     def print_data(self):
         """
@@ -911,6 +1016,10 @@ class Cell(object):
         print("Volume of the cell: ", self.volume)
         print("Relative density: ", self.relative_density)
         print("Number of nodes at boundary: ", self.get_number_nodes_at_boundary())
+
+# =============================================================================
+# SECTION: Unused Methods
+# =============================================================================
 
     def get_translation_rigid_body(self):
         """
@@ -951,15 +1060,4 @@ class Cell(object):
 
         return R
 
-    def refresh_from_global(self, lattice: "Lattice") -> None:
-        """
-        Rebuild self.beams_cell and self.points_cell from the current lattice state.
-        Keeps only beams that still declare this cell as a belonging, and derives points from those beams.
-        """
-        live_beams = {
-            b for b in lattice.beams
-            if getattr(b, "cell_belongings", None) and self in b.cell_belongings
-        }
-        self.beams_cell = live_beams
-        self.points_cell = {p for b in live_beams for p in (b.point1, b.point2)}
 
