@@ -1,11 +1,12 @@
-# timing.py — replace the whole file content with the following
+# =============================================================================
+# CLASS: Timing
+# =============================================================================
 
 from __future__ import annotations
 from collections import defaultdict
 from functools import wraps
 import threading
 import inspect
-import re
 from typing import Callable, Iterable, Optional
 
 # Top-level factory so pickle can find it (no lambdas inside __init__)
@@ -15,12 +16,6 @@ def _dd_float():
 class Timing:
     """
     General-purpose timing & call-graph collector.
-
-    Features:
-    - Works for free functions, bound methods, class/static methods.
-    - Stores fully-qualified names like "ClassName.method" when possible.
-    - Pickle-friendly (thread-locals and factories are rebuilt in __setstate__).
-    - Filtered summaries by classes, name patterns, and call depth.
     """
 
     def __init__(self):

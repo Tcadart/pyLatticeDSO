@@ -6,7 +6,10 @@ applying cylindrical transformations, and fitting to surfaces.
 """
 import math
 from point import Point
+from .timing import timing
 
+@timing.category("design_transformation")
+@timing.timeit
 def attractor_lattice(lattice, PointAttractorList: list[float] = None, alpha: float = 0.5,
                       inverse: bool = False) -> None:
     """
@@ -62,6 +65,8 @@ def attractor_lattice(lattice, PointAttractorList: list[float] = None, alpha: fl
     lattice.define_lattice_dimensions()
 
 
+@timing.category("design_transformation")
+@timing.timeit
 def curveLattice(lattice, center_x: float, center_y: float, center_z: float,
                  curvature_strength: float = 0.1) -> None:
     """
@@ -91,7 +96,8 @@ def curveLattice(lattice, center_x: float, center_y: float, center_z: float,
                 node.move_to(x, y, new_z)
     lattice.define_lattice_dimensions()
 
-
+@timing.category("design_transformation")
+@timing.timeit
 def cylindrical_transform(lattice, radius: float) -> None:
     """
     Apply cylindrical transformation to the lattice structure.
@@ -117,6 +123,8 @@ def cylindrical_transform(lattice, radius: float) -> None:
     lattice.delete_duplicated_beams()
 
 
+@timing.category("design_transformation")
+@timing.timeit
 def moveToCylinderForm(lattice, radius: float) -> None:
     """
     Move the lattice to a cylindrical form.
@@ -150,6 +158,8 @@ def moveToCylinderForm(lattice, radius: float) -> None:
     lattice.define_lattice_dimensions()
 
 
+@timing.category("design_transformation")
+@timing.timeit
 def fitToSurface(lattice, equation: callable, mode: str = "z", params: dict = None):
     """
     Adjust the lattice nodes to follow a surface defined by an equation.

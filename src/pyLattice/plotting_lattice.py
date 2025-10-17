@@ -1,8 +1,8 @@
-"""
-Visualization and saving of lattice structures from lattice objects.
-
-Created in 2025-01-16 by Cadart Thomas, University of technology Belfort-Montbéliard.
-"""
+# =============================================================================
+# CLASS: LatticePlotting
+#
+# Visualization and saving of lattice structures from lattice objects.
+# =============================================================================
 from typing import Tuple, TYPE_CHECKING
 
 import numpy as np

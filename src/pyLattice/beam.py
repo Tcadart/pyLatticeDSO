@@ -35,7 +35,7 @@ class Beam(object):
         material : int
             The material index of the beam.
         type_beam : int
-            The type of the beam (e.g., 1 for standard, 2 for modified beam types).
+            Reference to the geometry type of the beam in case of multiple geometries.
         cell_belongings : Cell or list of Cell
             The cell(s) to which the beam belongs.
         """
@@ -43,8 +43,6 @@ class Beam(object):
             raise ValueError("A beam cannot have the same point for both endpoints.")
         if radius <= 0:
             raise ValueError("Radius must be a positive value.")
-        if type_beam not in [1, 2]:
-            raise ValueError("type_beam must be either 1 or 2.")
         if not isinstance(material, int) or material < 0:
             raise ValueError("material must be a non-negative integer.")
 
