@@ -12,7 +12,9 @@ from sklearn.compose import TransformedTargetRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-matplotlib.use('TkAgg')  # Use TkAgg backend for interactive plots
+# Use TkAgg backend for interactive plots, unless MPLBACKEND is already set
+if 'MPLBACKEND' not in os.environ:
+    matplotlib.use('TkAgg')
 
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel

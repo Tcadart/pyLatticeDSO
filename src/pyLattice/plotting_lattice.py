@@ -4,6 +4,7 @@ Visualization and saving of lattice structures from lattice objects.
 Created in 2025-01-16 by Cadart Thomas, University of technology Belfort-Montbéliard.
 """
 from typing import Tuple, TYPE_CHECKING
+import os
 
 import numpy as np
 from matplotlib.lines import Line2D
@@ -20,7 +21,9 @@ if TYPE_CHECKING:
 
 from .utils import _get_beam_color, _prepare_lattice_plot_data, plot_coordinate_system, get_boundary_condition_color
 
-matplotlib.use('TkAgg')  # Or 'Qt5Agg' if you prefer Qt backend
+# Use TkAgg backend for interactive plots, unless MPLBACKEND is already set
+if 'MPLBACKEND' not in os.environ:
+    matplotlib.use('TkAgg')
 
 
 class LatticePlotting:
