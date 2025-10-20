@@ -1,7 +1,11 @@
+import os
 import numpy as np
 import matplotlib
-matplotlib.use('TkAgg')
 from matplotlib import pyplot as plt
+
+# Use TkAgg backend for interactive plots, unless MPLBACKEND is already set
+if 'MPLBACKEND' not in os.environ:
+    matplotlib.use('TkAgg')
 
 
 class OptimizationPlotter:

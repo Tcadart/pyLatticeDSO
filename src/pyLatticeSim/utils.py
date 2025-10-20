@@ -4,7 +4,10 @@ from pathlib import Path
 import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib
-matplotlib.use('TkAgg')
+
+# Use TkAgg backend for interactive plots, unless MPLBACKEND is already set
+if 'MPLBACKEND' not in os.environ:
+    matplotlib.use('TkAgg')
 
 
 def clear_directory(directoryPath):
