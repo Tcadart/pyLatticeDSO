@@ -18,7 +18,9 @@ class MatProperties:
         Initialize the MatProperties object by loading data from a file.
 
         Parameters:
-        name_material (str): The name of the material file (without extension) to load.
+        -----------
+        name_material : str
+            The name of the material to load (without file extension).
         """
         self.name_material = None
         self.density = None

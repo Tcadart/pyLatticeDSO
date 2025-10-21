@@ -21,8 +21,10 @@ from .utils import _validate_inputs_lattice, open_lattice_parameters
 from .gradient_properties import get_grad_settings, grad_material_setting, grad_settings_constant
 from .timing import timing
 
-if TYPE_CHECKING:
-    from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
+try:
+    from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer  # type: ignore
+except Exception:  # falls back during docs/CI when 'data' isn't available
+    from typing import Any as MeshTrimmer  # type: ignore
 
 class Lattice(object):
     """
@@ -37,8 +39,10 @@ class Lattice(object):
         -----------
         name_file: str
             Name of the JSON file containing lattice parameters.
+
         mesh_trimmer: MeshTrimmer, optional
             MeshTrimmer object to trim the lattice.
+
         _verbose: int, optional
             Verbosity level for logging.
         """
@@ -361,6 +365,7 @@ class Lattice(object):
         --------
         radMax: float
             Maximum radii of the lattice
+
         radMin: float
             Minimum radii of the lattice
         """
@@ -387,8 +392,10 @@ class Lattice(object):
         -----------
         grad_radius_property: list
             Properties defining the gradient for radii.
+
         grad_dim_property: list
             Properties defining the gradient for cell dimensions.
+
         grad_mat_property: list
             Properties defining the gradient for material settings.
         """
@@ -494,6 +501,7 @@ class Lattice(object):
         symmetry_plane: str, optional
             Plane of symmetry ('XY', 'XZ', 'YZ', 'X', 'Y',
             or 'Z'). If None, uses self.symmetry_lattice['sym_plane'].
+
         reference_point: tuple of float, optional
             Reference point for the symmetry operation (x_ref, y_ref, z_ref).
             If None, uses self.symmetry_lattice['sym_point'].
@@ -1018,6 +1026,7 @@ class Lattice(object):
         -----------
         axis: str
             Axis to query ('x', 'y', or 'z').
+
         index: int
             Index along the specified axis.
         """
@@ -1209,7 +1218,7 @@ class Lattice(object):
         """
         Check if all cells in the lattice are identical.
         """
-        if len(self.cells) < 2:
+        if len(self.cells) < 2 and self._verbose > 0:
             print(Fore.GREEN + "Only one or no cell: considered identical." + Style.RESET_ALL)
             return True
 
@@ -1250,7 +1259,8 @@ class Lattice(object):
                 print(Fore.RED + f"Beam topology/parameters differ between cell 0 and cell {i}" + Style.RESET_ALL)
                 return False
 
-        print(Fore.GREEN + "All cells are identical." + Style.RESET_ALL)
+        if self._verbose > 0:
+            print(Fore.GREEN + "All cells are identical." + Style.RESET_ALL)
         return True
 
 # =============================================================================
@@ -1313,6 +1323,7 @@ class Lattice(object):
         -----------
         surfaceNames: list[str]
             List of surfaces to find points on (e.g., ["Xmin", "Xmax", "Ymin"])
+
         surface_cells: list[str], optional
             List of surfaces to find points on cells (e.g., ["Xmin", "Xmax", "Ymin"]). If None, use surfaceNames.
 
@@ -1453,26 +1464,31 @@ class Lattice(object):
         -----------
         colinear_only : bool
             If True, only merge if the two beams are colinear.
+
         radius_strategy : str
             Strategy for determining the radius of the new beam:
             "inherit" (default) - if both beams have the same radius, use it; otherwise use b1's radius.
             "max" - use the maximum radius of the two beams.
             "min" - use the minimum radius of the two beams.
             "avg" - use the average radius of the two beams.
+
         type_strategy : str
             Strategy for determining the type of the new beam:
             "inherit" (default) - if both beams have the same type, use it; otherwise use b1's type.
             "max" - use the maximum type of the two beams.
             "min" - use the minimum type of the two beams.
             "avg" - use the average type of the two beams (rounded).
+
         material_strategy : str
             Strategy for determining the material of the new beam:
             "inherit" (default) - if both beams have the same material, use it; otherwise use b1's material.
             "max" - use the maximum material of the two beams.
             "min" - use the minimum material of the two beams.
             "avg" - use the average material of the two beams (rounded).
+
         iterative : bool
             If True, repeat the merging process until no more merges are possible or max_passes is reached.
+
         max_passes : int
             Maximum number of passes if iterative is True.
 
@@ -1609,8 +1625,10 @@ class Lattice(object):
         -----------
         protect_fixed: bool
             If True, do not delete beams connected to fixed nodes.
+
         protect_loaded: bool
             If True, do not delete beams connected to loaded nodes.
+
         also_delete_orphan_nodes: bool
             If True, delete nodes that become orphaned after beam removal.
 
@@ -1684,20 +1702,28 @@ class Lattice(object):
         -----------
         cut_mesh_at_boundary: bool
             If True, the mesh will be cut at the boundary of the lattice.
+
         mesh_refinement: float
             Refinement factor for the mesh (higher values lead to finer meshes).
+
         name_mesh: str
             Name of the mesh to be generated.
+
         save_mesh: bool
             If True, the mesh will be saved to a file.
+
         save_STL: bool
             If True, the mesh will be saved in STL format.
+
         volume_computation: bool
             If True, the volume of the mesh will be computed and printed.
+
         only_volume: bool
             If True, only the volume of the mesh will be computed and returned.
+
         only_relative_density: bool
             If True, only the relative density of the mesh will be computed and returned.
+
         cell_index: int | None
             If provided, only the specified cell will be meshed.
         """
@@ -1864,9 +1890,11 @@ class Lattice(object):
         entities_3d : list[(int,int)] | None
             Optional list of 3D OCC entities (pairs (dim=3, tag)). If None, all 3D
             entities in the current model are used.
+
         synchronize : bool
             If True, call gmsh.model.occ.synchronize() before querying mass properties.
             Set to False only if you've already synchronized after your boolean ops.
+
         return_details : bool
             If True, return a dict with 'total' and 'per_entity' (list of (tag, volume)).
 

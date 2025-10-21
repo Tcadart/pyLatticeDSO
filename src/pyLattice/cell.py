@@ -8,11 +8,14 @@ from collections import OrderedDict
 import numpy as np
 from colorama import Fore, Style
 
-from pyLatticeOpti.surrogate_model_relative_densities import _gp_mean_gradient_rbf_pipeline
 from .beam import *
 from .point import Point
 from .geometries.geometries_utils import *
 from .utils import _validate_inputs_cell
+try:
+    from pyLatticeOpti.surrogate_model_relative_densities import gp_mean_gradient_rbf_pipeline
+except Exception:
+    gp_mean_gradient_rbf_pipeline = None
 
 class Cell(object):
     """
@@ -30,26 +33,37 @@ class Cell(object):
         -----------
         pos: list
             Position of the cell in the lattice
+
         initial_cell_size: list
             Initial size of the cell
+
         coordinate: list
             Coordinates of the cell minimum corner in the lattice
+
         geom_types: list[str]
             Type of lattice geometry
+
         radii: float
             Base radii of the beam
+
         grad_radius: list
             Gradient of the radii
+
         grad_dim: list
             Gradient of the dimensions
+
         grad_mat: list
             Gradient of the material
+
         uncertainty_node: float
             Standard deviation for adding uncertainty to node coordinates. Defaults to 0.0.
+
         _verbose: bool
             If True, prints additional information during initialization. Defaults to False.
+
         beams_already_defined: set
             Set of beams already defined in the lattice to avoid duplication. Defaults to None.
+
         nodes_already_defined: set
             Set of nodes already defined in the lattice to avoid duplication. Defaults to None.
         """
@@ -61,7 +75,7 @@ class Cell(object):
         self.original_cell_geom = None
         self.original_tags = None
         self.center_point = None
-        self._beamMaterial = None
+        self.beam_material = None
         self.size = None
         self.pos: list[int] = pos
         self.coordinate: list[float] = coordinate
@@ -253,8 +267,10 @@ class Cell(object):
         -----------
         initialCellSize: list
             Initial size of the cell without modification
+
         beams_already_defined: set
             Set of beams already defined in the lattice to avoid duplication
+
         nodes_already_defined: set
             Set of nodes already defined in the lattice to avoid duplication
         """
@@ -284,12 +300,16 @@ class Cell(object):
         -----------
         latticeType: str
             Type of lattice structure (e.g., 'BCC', 'Hybrid1', etc.)
+
         beamRadius: float
             Radius of the beam
+
         beamType: int
             Type index of the beam
+
         beams_already_defined: set
             Set of beams already defined in the lattice to avoid duplication
+
         nodes_already_defined: set
             Set of nodes already defined in the lattice to avoid duplication
         """
@@ -351,7 +371,7 @@ class Cell(object):
                 beam = None
 
             if beam is None:
-                beam = Beam(p1, p2, beamRadius, self._beamMaterial, beamType, cell_belongings=self)
+                beam = Beam(p1, p2, beamRadius, self.beam_material, beamType, cell_belongings=self)
                 if beams_already_defined is not None:
                     beams_already_defined[bkey] = beam
             else: # Already defined beam, just add the cell belonging
@@ -366,9 +386,9 @@ class Cell(object):
         Get the material of the beam based on the material gradient.
         """
         if self.grad_mat is None:
-            self._beamMaterial = 0
+            self.beam_material = 0
         else:
-            self._beamMaterial = self.grad_mat[self.pos[2]][self.pos[1]][self.pos[0]]
+            self.beam_material = self.grad_mat[self.pos[2]][self.pos[1]][self.pos[0]]
 
     def get_radius(self, base_radius: float) -> float:
         """
@@ -597,6 +617,7 @@ class Cell(object):
         face_priority: Optional[List[str]]
             List defining the priority order of faces to assign nodes to when they lie on multiple faces.
             Default is ["Xmin", "Xmax", "Ymin", "Ymax", "Zmin", "Zmax"].
+
         tol: float
             Tolerance for determining if a point lies on a face. Default is 1e-9.
         """
@@ -688,6 +709,7 @@ class Cell(object):
         -----------
         nodeList: list or OrderedDict
             List or OrderedDict of Point objects representing the nodes.
+
         Returns:
         --------
         list
@@ -965,6 +987,7 @@ class Cell(object):
         -----------
         model: Pipeline
             Trained kriging model
+
         geometries_types: list
             List of geometry types in the trained kriging model
         """
@@ -978,7 +1001,7 @@ class Cell(object):
             x[geometries_types.index(g)] = float(rad)
 
         # Exact gradient in original feature space
-        grad_full = _gp_mean_gradient_rbf_pipeline(model, x)  # shape (len(geometries_types),)
+        grad_full = gp_mean_gradient_rbf_pipeline(model, x)  # shape (len(geometries_types),)
 
         # Reorder to match the cell's local parameter order (same as self.radii / self.geom_types)
         grad_local = np.zeros(len(self.radii), dtype=float)
@@ -1006,11 +1029,11 @@ class Cell(object):
         print("Cell size: ", self.size)
         print("Lattice type_beam: ", self.geom_types)
         print("Beam radii: ", self.radii)
-        print("Beam material: ", self._beamMaterial)
+        print("Beam material: ", self.beam_material)
         print("beams in cell: ", self.beams_cell)
         print("Cell center point: ", self.center_point)
         print("Cell index: ", self.index)
-        print("Beam material: ", self._beamMaterial)
+        print("Beam material: ", self.beam_material)
         print("Coupling matrix: ", self.coupling_matrix_B)
         print("Number of beams: ", len(self.beams_cell))
         print("Volume of the cell: ", self.volume)

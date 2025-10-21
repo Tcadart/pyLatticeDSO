@@ -12,5 +12,4 @@ name_file = "design/simple_BCC"
 lattice_object = LatticeSim(name_file, verbose=1)
 
 vizualizer = LatticePlotting()
-vizualizer.visualize_lattice(lattice_object, beam_color_type="radii",use_radius_grad_color =True,
-                             enable_system_coordinates=False)
+vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", enable_system_coordinates=False)

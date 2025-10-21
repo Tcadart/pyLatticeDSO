@@ -25,12 +25,16 @@ class Point:
         ----------
         x : float
             X-coordinate of the point.
+
         y : float
             Y-coordinate of the point.
+
         z : float
             Z-coordinate of the point.
+
         cell_belongings : List[Cell]
             List of cells that contain this point.
+
         node_uncertainty_SD : float, optional
             Standard deviation for node position uncertainty (default is 0.0).
 
@@ -151,8 +155,10 @@ class Point:
         ----------
         xNew : float
             New x-coordinate.
+
         yNew : float
             New y-coordinate.
+
         zNew : float
             New z-coordinate.
         """
@@ -238,6 +244,7 @@ class Point:
         ----------
         other : Point
             The other point to compare with.
+
         cell_size : list[float]
             Size of the unit cell in x, y, z directions.
 
@@ -347,6 +354,7 @@ class Point:
         ----------
         appliedForce : List[float]
             Applied force values for each DOF.
+
         DOF : list[int]
             List of DOF to assign (0: x, 1: y, 2: z, 3: Rx, 4: Ry, 5: Rz).
         """

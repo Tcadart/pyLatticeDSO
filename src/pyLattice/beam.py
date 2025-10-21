@@ -28,14 +28,19 @@ class Beam(object):
         ----------
         point1 : Point
             The first endpoint of the beam.
+
         point2 : Point
             The second endpoint of the beam.
+
         radius : float
             The radius of the beam.
+
         material : int
             The material index of the beam.
+
         type_beam : int
             Reference to the geometry type of the beam in case of multiple geometries.
+
         cell_belongings : Cell or list of Cell
             The cell(s) to which the beam belongs.
         """
@@ -204,6 +209,7 @@ class Beam(object):
         ----------
         other : Beam
             The other beam to calculate the angle with.
+
         periodicity : bool
             If True, considers periodic boundary conditions.
 
@@ -278,6 +284,7 @@ class Beam(object):
         ----------
         distance : float
             The distance from the specified endpoint along the beam.
+
         start_point : int
             The index of the starting point (1 or 2) from which the distance is measured
 
@@ -364,8 +371,10 @@ class Beam(object):
         ----------
         radius : float
             Radius at the point.
+
         angle : float
             Angle at the point in degrees.
+
         point : Point
             The point (endpoint) of the beam to which the data is assigned.
         """

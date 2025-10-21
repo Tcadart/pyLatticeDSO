@@ -17,8 +17,16 @@ def grad_settings_constant(num_cells_x: int, num_cells_y: int, num_cells_z: int,
     Parameters:
     -----------
     num_cells_x : int
+        Number of cells in the x-direction.
+
     num_cells_y : int
+        Number of cells in the y-direction.
+
     num_cells_z : int
+        Number of cells in the z-direction.
+
+    material_gradient : bool
+        If True, return a 3D list for material gradient; otherwise, return a flat list.
 
     Returns:
     --------
@@ -41,10 +49,13 @@ def get_grad_settings(num_cells_x, num_cells_y, num_cells_z, grad_properties: li
     -----------
     num_cells_x : int
         Number of cells in the x-direction.
+
     num_cells_y : int
         Number of cells in the y-direction.
+
     num_cells_z : int
         Number of cells in the z-direction.
+
     gradProperties: list[Rule, Direction, Parameters]
         All types of properties for gradient definition.
 

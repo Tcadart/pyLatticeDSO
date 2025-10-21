@@ -7,8 +7,13 @@ import joblib
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-from scipy.spatial import KDTree
-from sklearn.compose import TransformedTargetRegressor
+
+try:
+    from scipy.spatial import KDTree
+except Exception:
+    KDTree = None  # Allows importing this module during doc builds without SciPy binary compatibility.
+
+
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -396,21 +401,22 @@ def remove_large_volume_variations_dict(relative_densities: dict,
                                         distance_threshold=0.02,
                                         variation_threshold=0.1):
     """
-    Supprime les entrées du dict où le volume varie fortement par rapport aux voisins proches.
+    Delete entries in the relative_densities dict where neighboring points (in radius space)
+    have volume differences exceeding variation_threshold.
 
     Parameters
     ----------
     relative_densities : dict
-        Dictionnaire { (r1, r2, r3): volume }
+        Dictionary with keys as radius tuples and values as relative densities.
     distance_threshold : float
-        Distance max pour considérer deux points comme voisins.
+        Maximum distance in radius space to consider points as neighbors.
     variation_threshold : float
-        Différence de volume considérée comme une forte variation.
+        Maximum allowed volume difference between neighboring points.
 
     Returns
     -------
-    filtered_dict : dict
-        Nouveau dictionnaire filtré.
+    dict
+        Filtered dictionary with large variations removed.
     """
 
     # Conversion en arrays pour KDTree
@@ -784,7 +790,7 @@ def evaluate_saved_kriging(
         "model_path": str(model_path),
     }
 
-def _gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
+def gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
     """
     Exact gradient of the GPR predictive mean wrt inputs for either:
       • Pipeline(StandardScaler -> GaussianProcessRegressor), or

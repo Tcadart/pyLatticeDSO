@@ -141,9 +141,29 @@ class Timing:
 
         Parameters
         ----------
+        classes : Optional[Iterable[str]]
+            If provided, only include functions whose qualified names start with one of these class names.
+
+        name_pattern : Optional[str]
+            If provided, only include functions whose qualified names match this regex pattern.
+
+        max_depth : Optional[int]
+            If provided, only include functions up to this depth in the call graph.
+
+        min_total : float
+            Minimum total time (in seconds) to include a function in the report.
+
+        top_n : Optional[int]
+            If provided, only include the top N functions by total time.
+
+        print_children : bool
+            If True, print child functions under each parent in the call graph.
+
         name_width : int
-            Fixed width for the function column. Names longer than this are truncated with an ellipsis.
-        (Other params unchanged; see docstring above.)
+            Maximum width for function names; longer names will be truncated with an ellipsis.
+
+        group_by_category : bool
+            If True, group functions by their assigned category (using the @category decorator).
         """
         from colorama import Fore, Style
         import re

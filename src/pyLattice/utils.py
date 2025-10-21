@@ -144,6 +144,7 @@ def save_lattice_object(lattice, file_name: str = "LatticeObject") -> None:
     -----------
     lattice: Lattice
         Lattice object to save.
+
     file_name: str
         Name of the pickle file to save.
     """
@@ -368,8 +369,10 @@ def save_JSON_to_Grasshopper(lattice, nameLattice: str = "LatticeObject", multip
     -----------
     lattice: Lattice
         Lattice object to save.
+
     nameLattice: str
         Name of the lattice file to save.
+
     multipleParts: int, optional (default: 1)
         Number of parts to save.
     """
@@ -434,6 +437,7 @@ def function_penalization_Lzone(radius: float, angle: float) -> float:
     -----------
     radius: float
         Radius of the beam.
+
     angle: float
         Angle in degrees.
 
@@ -466,7 +470,7 @@ def _prepare_lattice_plot_data(beam, deformedForm: bool = False):
     return lines, nodes, index
 
 
-def _get_beam_color(beam, color_palette, beamColor, idxColor, cells, nbRadiusBins):
+def _get_beam_color(beam, color_palette, beamColor, idxColor, cells, nbRadiusBins = 5) -> Tuple[str, list]:
     beamColor = beamColor.lower()
 
     def _to_scalar_radius(r):
