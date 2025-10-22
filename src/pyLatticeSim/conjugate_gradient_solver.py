@@ -1,3 +1,12 @@
+# =============================================================================
+# FUNCTION: conjugate_gradient_solver
+#
+# DESCRIPTION:
+# This function implements the Conjugate Gradient method to solve the
+# linear system Ax = b. It supports preconditioning, convergence criteria,
+# and allows for a callback function to monitor progress.
+# =============================================================================
+
 import numpy as np
 from colorama import Style, Fore
 
@@ -21,20 +30,28 @@ def conjugate_gradient_solver(
     ----------
     A_operator : callable
         Function that computes the matrix-vector product Ax.
+
     b : array_like
         Right-hand side vector.
+
     M : array_like, optional
         Preconditioner matrix (if None, no preconditioning is applied).
+
     maxiter : int, optional
         Maximum number of iterations (default is 100).
+
     tol : float, optional
         Tolerance for convergence (default is 1e-5).
+
     mintol : float, optional
         Minimum value of residue (default is 1e-5).
+
     restart_every : int, optional
         Number of iterations after which to restart the search direction (default is 5).
+
     alpha_max : float, optional
         Maximum step size for the search direction (default is 1).
+
     callback : callable, optional
         Function to call after each iteration with the current solution.
     """
@@ -44,7 +61,7 @@ def conjugate_gradient_solver(
     x = np.zeros(n, dtype=np.float64)
     r = b - A_operator @ x
 
-    # Préconditionner
+    # Preconditioning
     if M is not None:
         z = M @ r
     else:
@@ -53,7 +70,7 @@ def conjugate_gradient_solver(
     p = z.copy()
     rz_old = np.dot(r, z)
     norm_b = np.linalg.norm(b)
-    info = 1  # Par défaut, 1 => n'a pas convergé
+    info = 1  # Default: did not converge
 
     for k in range(maxiter):
         # print(Fore.RED + "Iteration", k + 1, Style.RESET_ALL)
@@ -64,7 +81,7 @@ def conjugate_gradient_solver(
         x += alpha * p
         r -= alpha * Ap
 
-        # Appel du callback si besoin (pour suivi itératif)
+        # --- Callback function ---
         if callback is not None:
             callback(x)
 

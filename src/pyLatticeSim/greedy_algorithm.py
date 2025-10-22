@@ -1,3 +1,12 @@
+# =============================================================================
+# FUNCTION: Greedy Algorithm for Reduced Basis Generation
+#
+# DESCRIPTION:
+# This module implements a greedy algorithm to generate a reduced basis from a set of projected fields.
+# The algorithm iteratively selects the most significant projected field and orthogonalizes it against the
+# current basis until convergence. The resulting basis is orthonormal and can be used for efficient projections.
+# =============================================================================
+
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,10 +28,13 @@ def reduce_basis_greedy(schur_complement_dict_to_reduce: dict , tol_greedy: floa
     ----------
     schur_complement_dict_to_reduce : dict
         A dictionary where keys are identifiers and values are the Schur complements to be projected.
+
     tol_greedy : float
         Tolerance for the greedy algorithm convergence.
+
     file_name : str, optional
         If provided, the reduced basis and related data will be saved to a .npz file with this name.
+
     verbose : int, optional
         Verbosity level for logging information during the process.
 
@@ -30,16 +42,22 @@ def reduce_basis_greedy(schur_complement_dict_to_reduce: dict , tol_greedy: floa
     -------
     mainelem : np.ndarray
         Indices of the selected main elements.
+
     reducedcoef : np.ndarray
         Coefficients for the reduced basis.
+
     projfieldpp : list
         List of projected fields corresponding to the main elements.
+
     basis_reduced_ortho : np.ndarray
         The orthonormal reduced basis.
+
     alpha_ortho : np.ndarray
         Coefficients for projecting original fields onto the reduced basis.
+
     matP_sorted : np.ndarray
         Upper triangular matrix from the QR decomposition of the reduced coefficients.
+
     norm_mainelem_sorted : np.ndarray
         Norms of the projected fields corresponding to the main elements.
 
@@ -131,10 +149,13 @@ def save_reduced_basis(file_name: str, basis_reduced_ortho, alpha_ortho, list_el
     ----------
     file_name : str
         Name of the file to save the data (without extension).
+
     basis_reduced_ortho : np.ndarray
         The orthonormal reduced basis.
+
     alpha_ortho : np.ndarray
         Coefficients for projecting original fields onto the reduced basis.
+
     list_elements : np.ndarray
         List of elements corresponding to the reduced basis.
     """
@@ -157,6 +178,7 @@ def load_reduced_basis(lattice_object_sim: "LatticeSim", tol_greedy: float):
     ----------
     lattice_object_sim : LatticeSim
         The lattice simulation object containing parameters.
+
     tol_greedy : float
         Tolerance used in the greedy algorithm.
 
@@ -184,6 +206,7 @@ def find_name_file_reduced_basis(lattice_object_sim: "LatticeSim", tol_greedy: f
     ----------
     lattice_object_sim : LatticeSim
         The lattice simulation object containing parameters.
+
     tol_greedy : float
         Tolerance used in the greedy algorithm.
 
@@ -205,6 +228,7 @@ def project_to_reduced_basis(schur_complement_dict_to_project: dict, basis_matri
     ----------
     schur_complement_dict_to_project : dict
         A dictionary where keys are identifiers and values are the Schur complements to be projected.
+
     basis_matrix_ortho : np.ndarray
         The orthonormal reduced basis obtained from the greedy algorithm.
     """

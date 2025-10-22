@@ -1,9 +1,17 @@
+# =============================================================================
+# CLASS: exportSimulationResults
+#
+# DESCRIPTION:
+#  This class handles the exportation of simulation results to Paraview-compatible
+#  formats (VTU/PVD). It supports exporting displacement, rotation, moments,
+#  internal forces, local coordinate systems, and homogenization surfaces.
+# =============================================================================
+
 import math
 import os
 from pathlib import Path
 
 import numpy as np
-
 from dolfinx import io, fem
 from basix.ufl import element
 import gmsh
@@ -20,6 +28,7 @@ class exportSimulationResults:
     ------------
     simulation_model: object
         Your simulation model, exposing .domain, .u, .BeamModel, etc.
+
     name_export_file: str
         Folder name (will be created under <project_root>/simulation_results/)
         All exported files will be placed inside this directory.
@@ -41,7 +50,9 @@ class exportSimulationResults:
         self.M_function = None
         self.element_mesh = {}
 
-    # ---------------- Core helpers ----------------
+    # =============================================================================
+    # Core helpers
+    # =============================================================================
 
     def define_function_space(self):
         """Define the function space for forces and moments."""
@@ -49,7 +60,9 @@ class exportSimulationResults:
             element_ = element("DG", self.simulation_model.domain.basix_cell(), 0, shape=(3,))
             self.M_function = fem.functionspace(self.simulation_model.domain, element_)
 
-    # ---------------- Exports ----------------
+    # =============================================================================
+    # Exports
+    # =============================================================================
 
     def export_displacement_rotation(self, case: int = 0):
         """
@@ -124,7 +137,9 @@ class exportSimulationResults:
         Force.name = f"Forces_{case}" if case != 0 else "Forces"
         self.result_to_export.append(Force)
 
-    # ---------------- Write/close ----------------
+    # =============================================================================
+    # Write and finalize exports
+    # =============================================================================
 
     def export_finalize(self, time: float = 0.0):
         """Write and close (single-shot)."""
@@ -141,13 +156,19 @@ class exportSimulationResults:
         print(f"Saving simulation results to: {self.pvd_path}")
         self._vtk.close()
 
-    # ---------------- Composite exports ----------------
+    # =============================================================================
+    # Composite exports
+    # =============================================================================
 
     def full_export(self, case: int):
         """
         Export all data for a given case
+
+        Parameters
+        ----------
+        case: int
+            Loading case index
         """
-        # FIX: use the correct signatures
         self.export_displacement_rotation(case=case)
         self.export_moments(self.simulation_model.u, case=case)
         self.export_macro_strain(case)
@@ -158,6 +179,11 @@ class exportSimulationResults:
         """
         Export all data from 6 loading cases in homogenization.
         Each item in saveDataToExport is a solution field.
+
+        Parameters
+        ----------
+        homogenization_surface: bool
+            Whether to export the homogenization surface as well.
         """
         for case, simu_result in enumerate(self.simulation_model.saveDataToExport):
             # displacement/rotation from simu_result
@@ -195,15 +221,15 @@ class exportSimulationResults:
         ----------
         mat_S_orthotropic: np.ndarray
             6x6 stiffness matrix in Voigt notation (assumed orthotropic)
+
         filename: str
             Base name for output files (without extension)
+
         n_theta: int
             Number of angular samples in theta (0..pi)
+
         n_phi: int
             Number of angular samples in phi (0..2pi)
-
-        New update:
-        - Coloring mesh by stiffness value
         """
         # Angular grid
         thetas = np.linspace(0.0, np.pi, n_theta)       # 0..pi
@@ -278,15 +304,28 @@ class exportSimulationResults:
             if need_finalize:
                 gmsh.finalize()
 
-
-    # ---------------- 3D beam visualization utilities ----------------
-    # TODO : update this methods
+    # =============================================================================
+    # 3D Vizualisation export
+    # =============================================================================
+    # This section is not up to date with the rest of the code and may require adjustments.
 
     def export_vizualisation_3D(self, save_directory: str | Path, number_point_ext: int = 8, mesh_radius_int: int = 3):
         """
         Export beam data on 3D cylinders. All files are written inside <out_dir>/<save_directory>.
+
+        Parameters
+        ----------
+        save_directory: str | Path
+            Subdirectory inside self.out_dir where to save the VTU files.
+
+        number_point_ext: int
+            Number of points along the external circle of the beam cross-section mesh.
+
+        mesh_radius_int: int
+            Number of points along the radius of the beam cross-section mesh.
         """
         def find_vector_director(dofmap, geometry):
+            """Find the director vector of the beam element defined by dofmap."""
             return [geometry.x[dofmap[1]][i] - geometry.x[dofmap[0]][i] for i in range(3)]
 
         save_dir = self.out_dir / Path(save_directory)
@@ -313,6 +352,16 @@ class exportSimulationResults:
         self.create_PVD_file(save_dir)
 
     def save_VTK_data(self, save_path: str | Path, domainElement):
+        """
+        Save a single beam element domain to VTU file for Paraview visualization.
+
+        Parameters
+        ----------
+        save_path: str | Path
+            Full path where to save the VTU file.
+        domainElement: dolfinx.mesh.Mesh
+            The mesh of the beam element to save.
+        """
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         vtk = io.VTKFile(domainElement.comm, str(save_path), "w")
@@ -327,6 +376,14 @@ class exportSimulationResults:
         vtk.close()
 
     def convert_mesh_for_paraview(self, nameMesh: str | Path):
+        """
+        Convert a given mesh to Paraview VTU format for visualization.
+
+        Parameters
+        ----------
+        nameMesh: str | Path
+            Full path to the input mesh file in MSH format.
+        """
         nameMesh = Path(nameMesh)
         domain, a, b = io.gmshio.read_from_msh(str(nameMesh), self.simulation_model.domain.comm)
         try_dir = self.out_dir / "Result"
@@ -343,9 +400,17 @@ class exportSimulationResults:
         vtk.write_function(A)
         vtk.close()
 
-    def create_PVD_file(self, vtk_directory: str | Path, output_filename: str = "#0_AllElements.pvd"):
+    @staticmethod
+    def create_PVD_file(vtk_directory: str | Path, output_filename: str = "#0_AllElements.pvd"):
         """
         Generate a PVD file to open all beam results in one step inside the given directory.
+
+        Parameters
+        ----------
+        vtk_directory: str | Path
+            Directory where VTU files are located.
+        output_filename: str
+            Name of the output PVD file.
         """
         vtk_directory = Path(vtk_directory)
         vtk_directory.mkdir(parents=True, exist_ok=True)
@@ -369,16 +434,21 @@ class exportSimulationResults:
         pvd_path.write_text("\n".join(pvdContent))
         print("PVD generated:", pvd_path)
 
-    # ---------------- Geometry helpers ----------------
+    # =============================================================================
+    # 3D Geometry helpers
+    # =============================================================================
 
     def change_radius(self, domainElement, radius: float):
+        """ Change the radius of the beam element mesh."""
         domainElement.geometry.x[:, 0] *= radius
         domainElement.geometry.x[:, 1] *= radius
 
     def move_element(self, domainElement, nodePosition):
+        """ Move the beam element mesh to the correct position."""
         domainElement.geometry.x[:] += nodePosition
 
     def resize_element(self, domainElement, dofmap, nodePos):
+        """ Resize the beam element mesh to the correct length."""
         elementLenght = np.sqrt(
             (nodePos[dofmap[1]][0] - nodePos[dofmap[0]][0]) ** 2
             + (nodePos[dofmap[1]][1] - nodePos[dofmap[0]][1]) ** 2
@@ -386,7 +456,8 @@ class exportSimulationResults:
         )
         domainElement.geometry.x[:, 2] *= elementLenght
 
-    def rotate_element(self, domainElement, newDirection):
+    def rotate_element(self, newDirection):
+        """ Rotate the beam element mesh to the correct direction."""
         currentDirection = np.array([0, 0, 1])
         newDirection = np.array(newDirection)
         newDirection = newDirection / np.linalg.norm(newDirection)
@@ -405,9 +476,12 @@ class exportSimulationResults:
         R = I + np.sin(angle) * K + (1 - np.cos(angle)) * np.dot(K, K)
         domainElement.geometry.x[:, :3] = np.dot(domainElement.geometry.x[:, :3], R.T)
 
-    # ---------------- Mesh generation ----------------
+    # =============================================================================
+    # Mesh generation helpers
+    # =============================================================================
 
     def find_beam_element_mesh_name(self, number_point_ext: int, mesh_radius_int: int):
+        """ Find the mesh name for given parameters and check if it exists."""
         meshName = f"BeamElement_{number_point_ext}{mesh_radius_int}.msh"
         script_dir = Path(__file__).resolve().parent
         directory = script_dir / "Mesh" / "Beam_Element"
@@ -416,6 +490,7 @@ class exportSimulationResults:
         return str(filePath), filePath.exists()
 
     def generate_beam_element(self, number_point_ext: int, mesh_radius_int: int):
+        """ Generate the beam element mesh using Gmsh if it does not exist."""
         radius = 1
 
         def modify_number_point_ext_beam(n: int) -> int:
@@ -513,12 +588,19 @@ class exportSimulationResults:
 
         return nameMesh
 
-    # ---------------- Advanced export ----------------
+    # =============================================================================
+    # Advanced exports
+    # =============================================================================
 
     def export_reaction_force(self, lattice_data):
         """
         Export reaction force as a CG(1) vector field.
         NOTE: This routine assumes exact node coordinate matches after rounding.
+
+        Parameters
+        ----------
+        lattice_data: object
+            The lattice data structure containing cells and beams with node info.
         """
         alreadyDone = []
         self.define_function_space()

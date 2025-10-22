@@ -1,21 +1,20 @@
-"""
-Lattice beam simulation with FenicsX
-
-Author: Thomas Cadart
-Date: 2025-02-07
-"""
+# =============================================================================
+# CLASS: SimulationBase
+#
+# DESCRIPTION:
+# This class provides base utilities for performing simulations in FenicsX.
+# =============================================================================
 from typing import Tuple
 from colorama import Style, Fore
 
 import numpy as np
-
 import ufl
 from ufl import (TestFunction, TrialFunction, split, as_vector, dot, grad, diag, Measure,
                  dx, action)
 from basix.ufl import element, mixed_element
+from dolfinx import fem, common
 
-from dolfinx import fem, common, mesh
-from dolfinx.fem.petsc import LinearProblem
+from pyLattice.timing import timing
 
 class SimulationBase:
     """
@@ -53,9 +52,8 @@ class SimulationBase:
         self._simulation_prepared = False
         self._point_loads = []  # list of (global_dof_index, value) for true nodal point loads
 
-
-
-
+    @timing.category("simulation_base")
+    @timing.timeit
     def prepare_simulation(self):
         """
         Initialize the simulation requisites
@@ -68,6 +66,11 @@ class SimulationBase:
             self.define_K_form()
             self._simulation_prepared = True
 
+    # =============================================================================
+    # SECTION: Simulation Utilities
+    # =============================================================================
+    @timing.category("simulation_base")
+    @timing.timeit
     def define_test_trial_function(self):
         """
         Define Test and Trial Function from function space
@@ -75,6 +78,8 @@ class SimulationBase:
         self._u_ = TestFunction(self._V)
         self._du = TrialFunction(self._V)
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_stress_strain(self):
         """
         Calculate stress and strain
@@ -82,12 +87,16 @@ class SimulationBase:
         self._Eps = self.generalized_strains(self._u_)
         self._Sig = self.generalized_stress(self._du)
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_stress_grad(self):
         """
         Calculate stress gradient
         """
         self._SigGrad = self.generalized_stress_grad(self._du)
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def generalized_stress(self, u):
         """
         Calculate stress from a fem.Function
@@ -99,6 +108,8 @@ class SimulationBase:
         """
         return dot(diag(self.BeamModel.material.properties_for_stress), self.generalized_strains(u))
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def generalized_stress_grad(self, u):
         """
         Calculate stress gradient from a fem.Function
@@ -109,6 +120,8 @@ class SimulationBase:
         """
         return dot(diag(self.BeamModel.material.properties_for_stress_gradient), self.generalized_strains(u))
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def generalized_strains(self, u):
         """
         Calculate strain from a fem.Function
@@ -126,7 +139,8 @@ class SimulationBase:
                           dot(self.tgrad(theta), self._a1),
                           dot(self.tgrad(theta), self._a2)])
 
-
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_forces(self, u):
         """
         Extract force components
@@ -134,6 +148,8 @@ class SimulationBase:
         sig = self.generalized_stress(u)
         self.forces = as_vector([sig[0], sig[1], sig[2]])
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_moments(self, u):
         """
         Extract moments components
@@ -141,12 +157,20 @@ class SimulationBase:
         sig = self.generalized_stress(u)
         self.moments = as_vector([sig[3], sig[4], sig[5]])
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def tgrad(self, u):
         """
         Calculate tangential gradient
         """
         return dot(grad(u), self._t)
 
+    # =============================================================================
+    # SECTION: Function Space and Measure Definitions
+    # =============================================================================
+
+    @timing.category("simulation_base")
+    @timing.timeit
     def define_measures(self):
         """
         Define measures with subdomain data
@@ -156,6 +180,8 @@ class SimulationBase:
                             subdomain_data=self.BeamModel.markers)
         self._dx = Measure("dx", domain=self.domain, subdomain_data=self.BeamModel.markers)
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def define_mixed_function_space(self, element_type: Tuple[str, str]):
         """
         Define Mixed function space with ufl library
@@ -170,7 +196,11 @@ class SimulationBase:
         self._element_mixed = mixed_element([element_diplacement, element_moment])
         self._V = fem.functionspace(self.domain, self._element_mixed)
 
-
+    # =============================================================================
+    # SECTION: Form Definitions
+    # =============================================================================
+    @timing.category("simulation_base")
+    @timing.timeit
     def define_K_form(self):
         """
         Define K_form
@@ -178,6 +208,8 @@ class SimulationBase:
         self._k_form = (sum([self._Sig[i] * self._Eps[i] * self._dx for i in [0, 3, 4, 5]]) +
                         (self._Sig[1] * self._Eps[1] + self._Sig[2] * self._Eps[2]) * self._dx_shear)
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def define_K_form_grad(self):
         """
         Define K_formGrad
@@ -185,6 +217,8 @@ class SimulationBase:
         self._k_formGrad = (sum([self._SigGrad[i] * self._Eps[i] * self._dx for i in [0, 3, 4, 5]]) +
                         (self._SigGrad[1] * self._Eps[1] + self._SigGrad[2] * self._Eps[2]) * self._dx_shear)
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def define_L_form_null(self):
         """
         Define L_form as null
@@ -192,6 +226,12 @@ class SimulationBase:
         if self._l_form is None:
             self._l_form = self._u_[0] * fem.Constant(self.domain, 0.0) * self._ds
 
+
+    # =============================================================================
+    # SECTION: Boundary Condition Applications
+    # =============================================================================
+    @timing.category("simulation_base")
+    @timing.timeit
     def apply_force_at_node(self, node_tag: int, forceValue: float, dofIdx: int):
         """
         Apply a concentrated force at a specific node.
@@ -200,14 +240,17 @@ class SimulationBase:
         -----------
         node_tag: int
             Tag identifying the node.
+
         forceValue: float
             The value of the force.
+
         dofIdx: int
             The degree of freedom where the force is applied
         """
         self.apply_constraint_at_node(node_tag, forceValue, dofIdx, "Force")
 
-
+    @timing.category("simulation_base")
+    @timing.timeit
     def apply_displacement_at_node(self, node_tag: int, displacementValue: float, dofIdx: int):
         """
         Applying displacement at a node with a specific tag
@@ -216,62 +259,31 @@ class SimulationBase:
         ------------
         node_tag: int
             Tag identifying the node
+
         displacementValue: float
             Displacement value to apply at the node
+
         dofIdx: int
             Between 0 and 5: the degree of freedom where move is apply
         """
         self.apply_constraint_at_node(node_tag, displacementValue, dofIdx, "Displacement")
 
-    # def apply_constraint_at_node(self, node_tag: int, value_constraint: float, dof_idx: int, type_constraint: str):
-    #     """
-    #     Apply a constraint at a specific node.
-    #     """
-    #     dictType = {"Displacement", "Force"}
-    #     if type_constraint not in dictType:
-    #         raise ValueError("Type of constraint must be 'Displacement' or 'Force'")
-    #
-    #     # Locate the node indices with the given tag
-    #     nodeIndices = self.BeamModel.facets.find(node_tag)
-    #     if len(nodeIndices) == 0:
-    #         raise ValueError("No nodes found with tag " + str(node_tag))
-    #
-    #     if type_constraint == "Displacement":
-    #         # Find the DOFs associated with the node (mixed space)
-    #         nodesLocatedDofs = fem.locate_dofs_topological(self._V, self.domain.topology.dim - 1, nodeIndices)
-    #         # Keep only the targeted component dof
-    #         target_dof = nodesLocatedDofs[dof_idx]
-    #         u_bc = fem.Function(self._V)
-    #         with u_bc.vector.localForm() as loc:
-    #             loc[target_dof] = value_constraint
-    #         self._bcs.append(fem.dirichletbc(u_bc, np.array([target_dof], dtype=np.int32)))
-    #
-    #     elif type_constraint == "Force":
-    #         # DOFs at this vertex for the displacement subspace
-    #         dofs_node = fem.locate_dofs_topological(self._V.sub(0), self.domain.topology.dim - 1, nodeIndices)
-    #
-    #         # Indicator on the *mixed* space (so it can be used directly in the UFL form)
-    #         indicator = fem.Function(self._V)
-    #         with indicator.x.petsc_vec.localForm() as loc:
-    #             loc.set(0.0)
-    #             for idx in np.atleast_1d(dofs_node):
-    #                 loc[idx] = 1.0
-    #
-    #         (w_, theta_) = ufl.split(self._u_)
-    #         (ind_w, ind_theta) = ufl.split(indicator)
-    #
-    #         # Only the requested component carries the value; others are zero
-    #         f_vec = np.zeros(3, dtype=float)
-    #         f_vec[dof_idx] = value_constraint
-    #
-    #         for i in range(3):
-    #             if not np.isclose(f_vec[i], 0.0):
-    #                 term = f_vec[i] * ind_w[i] * w_[i] * self._dx
-    #                 self._l_form = term if self._l_form is None else self._l_form + term
-    #
+    @timing.category("simulation_base")
+    @timing.timeit
     def apply_constraint_at_node(self, node_tag: int, value_constraint: float, dof_idx: int, type_constraint: str):
         """
         Apply a constraint at a specific node.
+
+        Parameters:
+        -----------
+        node_tag: int
+            Tag identifying the node.
+        value_constraint: float
+            The value of the constraint (displacement or force).
+        dof_idx: int
+            The degree of freedom index (0-5) where the constraint is applied.
+        type_constraint: str
+            Type of constraint: "Displacement" or "Force".
         """
         dictType = {"Displacement", "Force"}
         if type_constraint not in dictType:
@@ -317,10 +329,16 @@ class SimulationBase:
                     term = f_vec[i] * ind_w[i] * w_[i] * self._dx
                     self._l_form = term if self._l_form is None else self._l_form + term
 
-
+    @timing.category("simulation_base")
+    @timing.timeit
     def apply_all_boundary_condition_on_lattice(self, cell_only=None):
         """
         Apply all boundary conditions on the lattice
+
+        Parameters:
+        -----------
+        cell_only: Cell, optional
+            If specified, only apply boundary conditions on this cell
         """
         for cell in self.BeamModel.lattice.cells:
             if cell_only is not None and cell_only != cell:
@@ -333,11 +351,17 @@ class SimulationBase:
                         if node.applied_force[i] != 0:
                             self.apply_force_at_node(node.tag, node.applied_force[i], i)
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def apply_all_boundary_condition_on_cell_without_distinction(self, cellToApply):
         """
         Apply all boundary conditions on a specific cell without distinction between fixed DOF and applied force.
         Here we *always* impose the current node.displacement_vector on each boundary DOF of the target cell.
-        Uses the **cell-local tag** to avoid None tags and wrong entity mapping.
+
+        Parameters:
+        -----------
+        cellToApply: Cell
+            The cell on which to apply the boundary conditions
         """
         for cell in self.BeamModel.lattice.cells:
             if cell is not cellToApply:
@@ -369,8 +393,8 @@ class SimulationBase:
                 for i in range(6):
                     self.apply_displacement_at_node(int(tag), float(node.displacement_vector[i]), i)
 
-
-
+    @timing.category("simulation_base")
+    @timing.timeit
     def apply_displacement_at_node_all_DOF(self, node_tag: int, displacementVector: list):
         """
         Applying displacement at a node with a specific tag
@@ -379,6 +403,7 @@ class SimulationBase:
         ------------
         node_tag: int
             Tag identifying the node
+
         displacementVector: list of float
             Displacement value to apply at the node
         """
@@ -396,8 +421,8 @@ class SimulationBase:
             # Apply the boundary condition
             self._bcs.append(fem.dirichletbc(u_bc, nodesLocatedDofs))
 
-
-
+    @timing.category("simulation_base")
+    @timing.timeit
     def find_boundary_tags(self):
         """
         Find all tag with a node on the boundary of the unit cell
@@ -416,6 +441,11 @@ class SimulationBase:
                 self._boundaryTags.append(tag)
         return self._boundaryTags
 
+    # =============================================================================
+    # SECTION: Problem Solving
+    # =============================================================================
+    @timing.category("simulation_base")
+    @timing.timeit
     def solve_problem(self):
         """
         Solve the problem with a linear solver
@@ -467,6 +497,11 @@ class SimulationBase:
         if self._verbose > 0:
             print(Fore.GREEN + "Problem solved" + Style.RESET_ALL)
 
+    # =============================================================================
+    # SECTION: Post-Processing Utilities
+    # =============================================================================
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_reaction_force(self, node_tag: int, solution: fem.Function = None):
         """
         Calculate reaction force on node_tag on macro coordinates basis
@@ -476,6 +511,7 @@ class SimulationBase:
         -----------
         node_tag : integer
             The node tag where reaction force is calculated
+
         solution : fem.Function, optional
             The solution function to use for the calculation. If None, uses self.u.
 
@@ -483,6 +519,7 @@ class SimulationBase:
         --------
         f : np.ndarray
             The reaction force vector (3 components).
+
         r : np.ndarray
             The position vector of the node.
         """
@@ -524,12 +561,25 @@ class SimulationBase:
 
         return f, r
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_reaction_force_and_moment_at_position(self, position: np.ndarray, solution: "fem.Function" = None,
                                                         tol: float = 1e-8):
         """
         Same as calculate_reaction_force_and_moment but selects the node by spatial position (x,y,z).
         Avoids locate_dofs_geometrical on subspaces by collapsing subspaces to get dof coords, then
         mapping back to the original subspace indices.
+
+        Parameters:
+        -----------
+        position : np.ndarray
+            The (x, y, z) position where the reaction force and moment are calculated.
+
+        solution : fem.Function, optional
+            The solution function to use for the calculation. If None, uses self.u.
+
+        tol : float, optional
+            Tolerance for matching DOF coordinates to the specified position.
         """
         if solution is None:
             solution = self.u
@@ -578,6 +628,8 @@ class SimulationBase:
 
         return reaction_forces
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_reaction_force_and_moment(self, node_tag: int):
         """
         Calculate reaction force and moment at a node on the macro coordinate basis
@@ -592,6 +644,7 @@ class SimulationBase:
         --------
         arrayOfReaction : list[float]
             The six components of the reaction (3 forces, 3 moments).
+
         r : np.ndarray
             The position vector of the node.
         """
@@ -623,9 +676,18 @@ class SimulationBase:
 
         return arrayOfReaction, r
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_reaction_force_and_moment_all_boundary_nodes(self, cell, full_nodes: bool = False):
         """
         Calculate reaction force on all boundary nodes
+
+        Parameters:
+        -----------
+        cell : Cell
+            The cell containing the nodes.
+        full_nodes : bool, optional
+            If True, include zero reaction forces for non-boundary nodes.
         """
         reactionForces = []
         positions = []
@@ -640,9 +702,16 @@ class SimulationBase:
                 positions.append(np.zeros(3))
         return reactionForces, positions
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_energy_cell(self, displacement: list):
         """
         Calculate the energy in the cell based on the displacement vector.
+
+        Parameters:
+        -----------
+        displacement : list of float
+            The displacement vector at the boundary nodes.
         """
         nodeInOrder = self.BeamModel.lattice.cells[0].getNodeOrderToSimulate()
         RF, nodes = self.calculate_reaction_force_and_moment_all_boundary_nodes(nodeInOrder)
@@ -651,6 +720,8 @@ class SimulationBase:
         Energy = 0.5 * np.dot(dataReactionForce, displacementVector)
         return Energy
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_strain_energy(self):
         """
         Compute the strain energy in the lattice cell.
@@ -665,6 +736,8 @@ class SimulationBase:
         W = fem.assemble_scalar(virtual_work_form)
         return W
 
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_strain_energy_grad(self):
         """
         Compute the strain energy gradient in the lattice cell.
@@ -682,7 +755,8 @@ class SimulationBase:
         WGrad = fem.assemble_scalar(virtual_work_form)
         return WGrad
 
-
+    @timing.category("simulation_base")
+    @timing.timeit
     def extract_stress_field(self):
         """
         Extract and interpolate the stress field in the structure after solving the problem.

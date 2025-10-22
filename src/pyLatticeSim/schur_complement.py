@@ -1,15 +1,27 @@
+# =============================================================================
+# CLASS: SchurComplement
+#
+# DESCRIPTION:
+# This class performs Schur Complement calculations on a given BeamModel.
+# =============================================================================
+
 import numpy as np
 from dolfinx import fem
 from petsc4py import PETSc
 from dolfinx.fem import petsc
 
-
 from .simulation_base import SimulationBase
+from pyLattice.timing import timing
 
 
 class SchurComplement(SimulationBase):
     """
     Class to perform Schur Complement calculations on a given BeamModel.
+
+    Parameters:
+    -----------
+    BeamModel : BeamModel
+        The beam model to perform the Schur Complement calculation on.
     """
 
     def __init__(self, BeamModel):
@@ -17,7 +29,8 @@ class SchurComplement(SimulationBase):
         self.prepare_simulation()
         self.construct_K()
 
-
+    @timing.category("schur_complement")
+    @timing.timeit
     def construct_K(self):
         """
         Construct K matrix from variational form
@@ -26,6 +39,8 @@ class SchurComplement(SimulationBase):
         self._K = petsc.assemble_matrix(k)
         self._K.assemble()
 
+    @timing.category("schur_complement")
+    @timing.timeit
     def calculate_schur_complement(self, tags_nodes_boundary):
         """
         Calculate the Schur complement of the stiffness matrix.

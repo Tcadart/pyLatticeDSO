@@ -1,6 +1,11 @@
-"""
-Superclass of lattice for optimization purposes
-"""
+# =============================================================================
+# CLASS: LatticeOpti
+#
+# DESCRIPTION:
+# This class extends the LatticeSim class to include optimization capabilities.
+# It allows for the optimization of lattice parameters using various objective functions and parameterizations.
+# It supports constraints such as relative density and can be used with different simulation types (FEM or DDM).
+# =============================================================================
 import os
 from pathlib import Path
 from statistics import mean
@@ -12,7 +17,6 @@ import joblib
 import numpy as np
 from scipy.optimize import NonlinearConstraint, Bounds, minimize
 from colorama import Fore, Style
-from matplotlib import pyplot as plt
 
 from pyLattice.cell import Cell
 from pyLattice.utils import open_lattice_parameters

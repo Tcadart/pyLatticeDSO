@@ -1,3 +1,11 @@
+# =============================================================================
+# CLASS: HomogenizedCell
+#
+# DESCRIPTION:
+# This class performs lattice homogenization analysis using finite element methods.
+# It calculates the homogenized stiffness matrix of a unit cell under various loading conditions.
+# =============================================================================
+
 import dolfinx_mpc
 import numpy as np
 import ufl
@@ -7,6 +15,7 @@ from petsc4py import PETSc
 from ufl import as_vector, dot
 
 from .simulation_base import SimulationBase
+from pyLattice.timing import timing
 
 
 class HomogenizedCell(SimulationBase):
@@ -21,6 +30,8 @@ class HomogenizedCell(SimulationBase):
 
     def __init__(self, BeamModel):
         super().__init__(BeamModel)
+        self.generalizedStress = None
+        self._u_tot = None
         self._k_form_boundary = None
         self._orthotropyError = None
         self._symmetryError = None
@@ -32,6 +43,12 @@ class HomogenizedCell(SimulationBase):
         self._SigImposed = None
         self._EpsImposed = None
 
+    # =============================================================================
+    # SECTION: Applying boundary conditions and defining forms
+    # =============================================================================
+
+    @timing.category("homogenization")
+    @timing.timeit
     def calculate_imposed_stress_strain(self, case: int):
         """
         Calculate stress and strain from an imposed study case
@@ -51,6 +68,8 @@ class HomogenizedCell(SimulationBase):
         self._EpsImposed = self.get_imposed_strains(w)
         self._SigImposed = self.generalized_stress(self._u_)
 
+    @timing.category("homogenization")
+    @timing.timeit
     def find_imposed_strain(self, case: int):
         """
         Find imposed strain on domain
@@ -88,6 +107,8 @@ class HomogenizedCell(SimulationBase):
             raise ValueError("Invalid case number. Must be between 1 and 6.")
         return w
 
+    @timing.category("homogenization")
+    @timing.timeit
     def get_imposed_strains(self, w):
         """
         Calculate strains from imposed displacement domain on dim-6 vectorspace
@@ -102,6 +123,8 @@ class HomogenizedCell(SimulationBase):
                           dot(self.tgrad(w), self._a2),
                           0, 0, 0])
 
+    @timing.category("homogenization")
+    @timing.timeit
     def locate_Dofs(self, selection_function: callable):
         """
         Locate degrees of freedom from selected logic function
@@ -110,6 +133,7 @@ class HomogenizedCell(SimulationBase):
         Parameters:
         -----------
         selectionFunction: logicalFunction
+            Logical function to locate entities
         """
         nodesLocated = mesh.locate_entities(self.domain, self.domain.topology.dim - 1, selection_function)
         nodesLocatedIndices = np.array(nodesLocated, dtype=np.int32)
@@ -117,6 +141,8 @@ class HomogenizedCell(SimulationBase):
                                                        nodesLocatedIndices)
         return nodesLocatedDofs
 
+    @timing.category("homogenization")
+    @timing.timeit
     def define_K_form_boundary(self, markers: int = None):
         """
         Define K_form on element tag by markers
@@ -129,6 +155,8 @@ class HomogenizedCell(SimulationBase):
         self._k_form_boundary = sum([self._Sig[i] * self._Eps[i] * self._dx(markers) for i in [0, 3, 4, 5]]) + (
                 self._Sig[1] * self._Eps[1] + self._Sig[2] * self._Eps[2]) * self._dx_shear(markers)
 
+    @timing.category("homogenization")
+    @timing.timeit
     def define_L_form(self):
         """
         Define L_form
@@ -137,6 +165,8 @@ class HomogenizedCell(SimulationBase):
                          (self._SigImposed[1] * self._EpsImposed[1] * self._dx_shear) +
                          (self._SigImposed[2] * self._EpsImposed[2] * self._dx_shear))
 
+    @timing.category("homogenization")
+    @timing.timeit
     def periodic_boundary_condition(self):
         """
         Applying periodic boundary condition on unit cell
@@ -179,6 +209,8 @@ class HomogenizedCell(SimulationBase):
                     self._mpc.add_constraint(self._V, dof_slaves, dof_masters, coef, owner, offset)
         self._mpc.finalize()
 
+    @timing.category("homogenization")
+    @timing.timeit
     def initialize_solver(self):
         """
         Initialize solver for multiple RHS solving
@@ -196,6 +228,8 @@ class HomogenizedCell(SimulationBase):
                 self._solver.getPC().setType(PETSc.PC.Type.LU)
                 self._solver.setFromOptions()
 
+    @timing.category("homogenization")
+    @timing.timeit
     def solve_multiple_linear_problem(self):
         """
         Function to solve multiple linear problem with the same LHS
@@ -212,6 +246,8 @@ class HomogenizedCell(SimulationBase):
         self._solver.solve(b, self.u.x.petsc_vec)
         self.u.x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
 
+    @timing.category("homogenization")
+    @timing.timeit
     def calculate_BTerm(self):
         """
         Calculate the right-hand side vector for the linear problem.
@@ -219,14 +255,14 @@ class HomogenizedCell(SimulationBase):
         b = dolfinx_mpc.assemble_vector(fem.form(self._l_form), self._mpc)
         return b
 
+    @timing.category("homogenization")
+    @timing.timeit
     def calculate_macro_stress(self, case: int):
         """
         Calculate macro stress on define boundary tags
 
         Parameter:
         ----------
-        bndnodesTags: np.array(Tags)
-            List of tag you want to calculate macro stress
         case: integer
             Strain case
 
@@ -245,6 +281,8 @@ class HomogenizedCell(SimulationBase):
                 macroStress += np.kron(np.vstack(fi), ri)
         return macroStress
 
+    @timing.category("homogenization")
+    @timing.timeit
     def get_logical_function(self, location: str):
         """
         Return a logical function for selecting parts of the domain boundary
@@ -275,19 +313,20 @@ class HomogenizedCell(SimulationBase):
         else:
             raise ValueError(f"Unknown location type: {location}")
 
+    @timing.category("homogenization")
+    @timing.timeit
     def apply_dirichlet_for_homogenization(self):
         """
         Apply Dirichlet boundary condition for homogenization
         """
-        # selectionFunction = self.getLogicalFunction("Internal")
-        # nodesLocatedDofs = self.locateDofs(selectionFunction)
-        # nodesLocatedDofs = nodesLocatedDofs[50:53]
         selectionFunction = self.get_logical_function("Center")
         nodesLocatedDofs = self.locate_Dofs(selectionFunction)
         # Define zero function of dim vector space to apply boundary condition
         u_bc = fem.Function(self._V)
         self._bcs = [fem.dirichletbc(u_bc, nodesLocatedDofs)]
 
+    @timing.category("homogenization")
+    @timing.timeit
     def calculate_generalized_stress(self, case: int):
         """
         Calculate generalized stress on a strain case
@@ -306,6 +345,12 @@ class HomogenizedCell(SimulationBase):
         self._u_tot.x.array[:] = self.u.x.array + Macro.x.array
         self.generalizedStress = self.generalized_stress(self._u_tot)
 
+    # =============================================================================
+    # SECTION: Solving methods
+    # =============================================================================
+
+    @timing.category("homogenization")
+    @timing.timeit
     def solve_full_homogenization(self):
         """
         Solve the entire homogenization of the unit cell
@@ -337,6 +382,12 @@ class HomogenizedCell(SimulationBase):
         self.homogenizeMatrix = 0.5 * (self.homogenizeMatrix + self.homogenizeMatrix.T)  # Ensure symmetry
         return self.homogenizeMatrix
 
+    # =============================================================================
+    # SECTION: Post-processing methods
+    # =============================================================================
+
+    @timing.category("homogenization")
+    @timing.timeit
     def print_homogenized_matrix(self):
         """
         Print simulation results of 6 loading case
@@ -345,6 +396,8 @@ class HomogenizedCell(SimulationBase):
         for row in self.homogenizeMatrix:
             print(" ".join(f"{val:10.3f}" for val in row))
 
+    @timing.category("homogenization")
+    @timing.timeit
     def convert_to_orthotropic_form(self):
         """
         Convert homogenize matrix to orthotropic form
@@ -379,6 +432,8 @@ class HomogenizedCell(SimulationBase):
         self.orthotropicMatrix[1, 2] = nuyz
         self.orthotropicMatrix[2, 1] = self.orthotropicMatrix[1, 2]
 
+    @timing.category("homogenization")
+    @timing.timeit
     def get_S_orthotropic(self):
         """
         Return orthotropic matrix
@@ -416,6 +471,8 @@ class HomogenizedCell(SimulationBase):
         print('Gxz ', self.orthotropicMatrix[4, 4])
         print('Gyz ', self.orthotropicMatrix[5, 5])
 
+    @timing.category("homogenization")
+    @timing.timeit
     def compute_errors(self):
         """
         Calculate errors

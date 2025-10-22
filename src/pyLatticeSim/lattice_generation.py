@@ -1,9 +1,14 @@
+# =============================================================================
+# CLASS: latticeGeneration
+#
+# DESCRIPTION:
+#   This class handles the meshing of beam lattice structures using GMSH with 1D elements.
+# =============================================================================
+
 import gmsh
-import numpy as np
 from dolfinx.io.gmshio import model_to_mesh
 
-from .utils_timing import *
-timingLG = Timing()
+from pyLattice.timing import timing
 
 class latticeGeneration:
     """
@@ -27,21 +32,36 @@ class latticeGeneration:
         self.lattice = lattice
         self.COMM = COMM
 
-    @timingLG.timeit
+    @timing.category("latticeGeneration")
+    @timing.timeit
     def find_mesh_size(self, mesh_element_lenght: float = 0.05):
         """
         Determine mesh size
+        Function to be updated for better adaptive meshing
+
+        Parameters:
+        -----------
+        mesh_element_lenght: float
+            Length of mesh element in unit of lattice cell size
         """
         self._mesh_size = mesh_element_lenght * self.lattice.cell_size_x
 
-    @timingLG.timeit
+    @timing.category("latticeGeneration")
+    @timing.timeit
     def mesh_lattice_cells(self, cell_index, mesh_element_lenght:float = 0.05, save_mesh:bool = True):
         """
         Meshing lattice structures with node tags and beam tags
 
         Parameters:
         -----------
+        cell_index: int
+            Index of the cell to mesh. If None, all cells are meshed.
 
+        mesh_element_lenght: float
+            Length of mesh element in unit of lattice cell size
+
+        save_mesh: bool
+            If True, save the mesh in a .msh file
         """
         # Find mesh size
         self.find_mesh_size(mesh_element_lenght)
@@ -66,8 +86,8 @@ class latticeGeneration:
             gmsh.finalize()
             return domain, cells, facets, radtagBeam, tagBeam
 
-
-    @timingLG.timeit
+    @timing.category("latticeGeneration")
+    @timing.timeit
     def generate_nodes(self, cell_index = None):
         """
         Generate nodes in the structures with tags associated
@@ -95,21 +115,24 @@ class latticeGeneration:
                             if tagAdd not in self._tag_point_index:
                                 self._tag_point_index[tagAdd] = []
                             self._tag_point_index[tagAdd].append(point_id)
-
-
-
-    @timingLG.timeit
+    @timing.category("latticeGeneration")
+    @timing.timeit
     def generate_beams(self, cell_index = None):
         """
         Generate beams in the structures with tags associated
 
         Parameters:
         -----------
-        beams: list of beams from lattice class
+        cell_index: int
+            Index of the cell to mesh. If None, all cells are meshed.
 
         Return:
         --------
-        tag_beam: dictionary of tags associated with radius
+        radBeam: dict
+            Dictionary of beam radius and associated tag
+
+        tagBeam: dict
+            Dictionary of beam modification status and associated set of radius
         """
         beam_already_added = set()
         tagBeam = {1:set(), 0:set()}
@@ -137,7 +160,8 @@ class latticeGeneration:
                             self._tag_beam_index[tag].append(beam_id)
         return radBeam, tagBeam
 
-    @timingLG.timeit
+    @timing.category("latticeGeneration")
+    @timing.timeit
     def generate_beams_tags(self):
         """
         Generate tags for beam elements
@@ -147,7 +171,8 @@ class latticeGeneration:
                 gmsh.model.addPhysicalGroup(self.gdim, beamIds, tag)
                 gmsh.model.setPhysicalName(self.gdim, tag, "tag" + str(tag))
 
-    @timingLG.timeit
+    @timing.category("latticeGeneration")
+    @timing.timeit
     def generate_points_tags(self):
         """
         Generate points tags with normalized procedure
@@ -157,7 +182,8 @@ class latticeGeneration:
                 gmsh.model.addPhysicalGroup(self.gdim - 1, pointIds, tag)
                 gmsh.model.setPhysicalName(self.gdim - 1, tag, "tag" + str(tag))
 
-    def _print_mesh_tags(self):
+    @staticmethod
+    def _print_mesh_tags():
         """
         Debug function to print mesh tags
         Print the physical groups of the mesh, including points and beams.
@@ -174,23 +200,3 @@ class latticeGeneration:
                     print(f"Physical Group {tag} ({tagName[tag]}): {ents}")
                 else:
                     print(f"Physical Group {tag}: {ents}")
-
-    @timingLG.timeit
-    def mesh_beam(self, L: float, meshSize:float):
-        """
-        Mesh a beam of length L
-        """
-        meshComm = self.COMM
-        modelRank = 0
-        gmsh.initialize()
-        if meshComm.rank == modelRank:
-            self.geom = gmsh.model.geo
-            P0 = self.geom.addPoint(0, 0, 0, meshSize=meshSize)
-            P1 = self.geom.addPoint(L, 0, 0, meshSize=meshSize)
-            L0 = self.geom.addLine(P0, P1)
-            gmsh.model.addPhysicalGroup(1, [L0])
-            self.geom.synchronize()
-
-            gmsh.model.mesh.generate(dim=1)
-            gmsh.write("Mesh/Beam.msh")
-            gmsh.finalize()
