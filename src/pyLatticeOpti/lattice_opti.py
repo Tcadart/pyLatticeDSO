@@ -29,8 +29,7 @@ from pyLatticeOpti.surrogate_model_relative_densities import _find_path_to_data
 if TYPE_CHECKING:
     from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
 
-from pyLattice.timing import *
-timingOpti = Timing()
+from pyLattice.timing import timing
 
 class LatticeOpti(LatticeSim):
     """
@@ -49,6 +48,7 @@ class LatticeOpti(LatticeSim):
         self.actual_objective = None
         self.denorm_objective = None
         self.initial_value_objective = None
+        self.actualGradient = None
         self.initial_parameters = None
         self.bounds = None
         self.constraints = []
@@ -107,6 +107,12 @@ class LatticeOpti(LatticeSim):
 
         self.load_relative_density_model()
 
+    # =============================================================================
+    # SECTION: Optimization methods
+    # =============================================================================
+
+    @timing.category("optimization")
+    @timing.timeit
     def optimize_lattice(self):
         """
         Runs the optimization process using SLSQP.
@@ -163,6 +169,9 @@ class LatticeOpti(LatticeSim):
         if self.objective_type == "compliance":
             print(f"Final compliance (non-normalized): {self.denorm_objective}")
 
+    # =============================================================================
+    # SECTION: Input methods
+    # =============================================================================
     def redefine_optim_parameters(self, max_iteration: int = None, ftol: float = None, disp: bool = None,
                                   eps: float = None) -> None:
         """
@@ -172,10 +181,13 @@ class LatticeOpti(LatticeSim):
         -----------
         max_iteration: int
             Maximum number of iterations for the optimizer
+
         ftol: float
             Tolerance for termination by the optimizer
+
         disp: bool
             Whether to display optimization messages
+
         eps: float
             Step size for numerical approximation of the Jacobian
         """
@@ -218,9 +230,20 @@ class LatticeOpti(LatticeSim):
         if not self.enable_gradient_computing:
             print(Fore.YELLOW + "Warning: Gradient computing is disabled. Optimization may be slow." + Fore.RESET)
 
-    def _get_DDM_enable_simulation(self, name_file) -> bool:
+    @staticmethod
+    def _get_DDM_enable_simulation(name_file) -> bool:
         """
         Check if DDM simulation is enabled
+
+        Parameters:
+        -----------
+        name_file: str
+            Name of the input file
+
+        Returns:
+        -----------
+        enable_domain_decomposition_solver: bool
+            True if DDM simulation is enabled, False otherwise
         """
         lattice_parameters = open_lattice_parameters(name_file)
         optimization_informations = lattice_parameters.get("optimization_informations", {}).get("simulation_type", None)
@@ -373,260 +396,12 @@ class LatticeOpti(LatticeSim):
         )
         self.constraints.append(density_nl_constraint)
 
-    def density_constraint(self, r):
-        """
-        Density constraint function
+    # =============================================================================
+    # SECTION: Objective function methods
+    # =============================================================================
 
-        Parameters:
-        r: list of float
-            List of optimization parameters
-
-        """
-        print(Fore.LIGHTGREEN_EX + "Density constraint function" + Fore.RESET)
-        self.set_optimization_parameters(r)
-        densConstraint = self.get_relative_density_constraint()
-        # if self.densConstraintInitial is None:
-        #     self.densConstraintInitial = densConstraint
-        # densConstraint = densConstraint/self.densConstraintInitial
-        if self._verbose > 0:
-            print("Density constraint: ", densConstraint)
-        return densConstraint
-
-    def density_constraint_gradient(self, r):
-        """
-        Density constraint gradient function
-
-        Parameters:
-        r: list of float
-            List of optimization parameters
-        """
-        print(Fore.LIGHTBLUE_EX + "Density constraint gradient function" + Fore.RESET)
-        self.set_optimization_parameters(r)
-        # gradDensConstraint = self.get_relative_density_gradient_kriging()
-
-        if self.optimization_parameters["type"] != "linear" and self.compute_gradient_relative_density:
-            gradDensConstraint = self.get_relative_density_gradient_kriging()
-        else:
-            gradDensConstraint = self.finite_difference_density_gradient(r, eps=1e-2, scheme="central")
-        print("Density constraint gradient: ", gradDensConstraint)
-        # gradDensConstraint = gradDensConstraint/self.densConstraintInitial
-        return gradDensConstraint
-
-
-    def get_relative_density_constraint(self) -> float:
-        """
-        Get relative density of the lattice
-        """
-        relativeDensity = self.get_relative_density()
-        error = relativeDensity - self.relative_density_objective
-        if self._verbose > 0:
-            print("Relative density: ", relativeDensity)
-            print("Relative density maximum: ", self.relative_density_objective)
-            print("Relative density error: ", error)
-        return error
-
-    def get_relative_density(self) -> float:
-        """
-        Get mean relative density of all cells in lattice
-
-        Returns:
-        --------
-        meanRelDens: float
-            Mean relative density of the lattice
-        """
-        cellRelDens = []
-        for cell in self.cells:
-            if self.relative_density_direct_computation:
-                relative_dens = self.generate_mesh_lattice_Gmsh(volume_computation=True, cut_mesh_at_boundary=True,
-                                                     save_STL=False, only_relative_density=True,
-                                                     cell_index=cell.index)
-                print(f"Cell {cell.index} relative density (direct computation): {relative_dens}")
-                cellRelDens.append(relative_dens)
-            elif self._simulation_flag and self.kriging_model_relative_density is not None:
-                cellRelDens.append(cell.get_relative_density_kriging(self.kriging_model_relative_density))
-            else:
-                cellRelDens.append(cell.relative_density)
-        meanRelDens = mean(cellRelDens)
-        return meanRelDens
-
-    def get_relative_density_gradient(self) -> list[float]:
-        """
-        Get relative density gradient of the lattice
-
-        Returns:
-        --------
-        grad: list of float
-            Gradient of relative density
-        """
-        if len(self.relative_density_poly) == 0:
-            self.define_relative_density_function()
-        if len(self.cells[0].radii) != len(self.relative_density_poly):
-            raise ValueError("Invalid radii data.")
-
-        grad = []
-        for cell in self.cells:
-            grad.append(cell.get_relative_density_gradient())
-        return grad
-
-
-    def get_relative_density_gradient_kriging(self) -> np.array:
-        """
-        Get relative density gradient of the lattice using kriging model
-
-        Returns:
-        --------
-        grad: list of float
-            Gradient of relative density
-        """
-        if self.optimization_parameters["type"] == "unit_cell":
-            n_cells = len(self.cells)
-            n_geom = len(self.geom_types)
-            grad = np.zeros(self.number_parameters, dtype=float)
-            scale = (self.max_radius - self.min_radius) if self.enable_normalization else 1.0
-
-            for cell in self.cells:
-                g_cell_exact = np.asarray(
-                    cell.get_relative_density_gradient_kriging_exact(
-                        self.kriging_model_relative_density,
-                        self.kriging_model_geometries_types
-                    ),
-                    dtype=float
-                )
-
-                if g_cell_exact.size != n_geom:
-                    raise ValueError(f"Gradient size mismatch: expected {n_geom}, got {g_cell_exact.size}")
-
-                start = cell.index * n_geom
-                grad[start:start + n_geom] = (g_cell_exact * scale) / n_cells
-
-            return grad
-        elif self.optimization_parameters["type"] == "linear":
-            numberOfCells = len(self.cells)
-            grad = np.zeros(self.number_parameters)
-            dirs = self.optimization_parameters.get("direction", [])
-            if not dirs:
-                raise ValueError("No directions provided for linear optimization.")
-            valid_dirs = {"x", "y", "z"}
-            if any(d not in valid_dirs for d in dirs):
-                raise ValueError(f"Invalid direction in {dirs}; valid are 'x', 'y', 'z'.")
-            coeffs = {"x": 0.0, "y": 0.0, "z": 0.0}
-            for i, dkey in enumerate(dirs):
-                coeffs[dkey] = float(self.initial_parameters[i])
-            d_intercept = float(self.initial_parameters[-1])
-
-            for cell in self.cells:
-                cx, cy, cz = cell.center_point
-                value = coeffs["x"] * cx + coeffs["y"] * cy + coeffs["z"] * cz + d_intercept
-                value = max(self.min_radius, min(self.max_radius, value))
-                gradient3Geom = cell.get_relative_density_gradient_kriging(
-                    self.kriging_model_relative_density, self.kriging_model_geometries_types) / numberOfCells
-                for i, dkey in enumerate(dirs):
-                    grad[i] += gradient3Geom[0] * cx if dkey == "x" else gradient3Geom[1] * cy if dkey == "y" else gradient3Geom[2] * cz
-                grad[-1] += sum(gradient3Geom)
-            return grad
-        elif self.optimization_parameters["type"] == "constant":
-            n_cells = len(self.cells)
-            hybrid = bool(self.optimization_parameters.get("hybrid", False))
-            n_geom = len(self.geom_types)
-            scale = (self.max_radius - self.min_radius) if self.enable_normalization else 1.0
-
-            if hybrid:
-                grad = np.zeros(n_geom, dtype=float)
-                for cell in self.cells:
-                    g_cell = np.asarray(
-                        cell.get_relative_density_gradient_kriging(
-                            self.kriging_model_relative_density,
-                            self.kriging_model_geometries_types
-                        ),
-                        dtype=float
-                    )
-                    grad += g_cell
-                grad /= n_cells
-                grad *= scale
-                return grad
-            else:
-                g_total = 0.0
-                for cell in self.cells:
-                    g_cell = np.asarray(
-                        cell.get_relative_density_gradient_kriging(
-                            self.kriging_model_relative_density,
-                            self.kriging_model_geometries_types
-                        ),
-                        dtype=float
-                    )
-                    g_total += float(np.sum(g_cell))
-                g_total /= n_cells
-                g_total *= scale
-                return np.array([g_total], dtype=float)
-        else:
-            raise ValueError("Invalid optimization parameters type.")
-
-    def finite_difference_density_gradient(self, r, eps: float = 1e-2, scheme: str = "central") -> np.ndarray:
-        """
-        Approximate the gradient of the density constraint g(θ) = ρ̄(θ) - ρ_target
-        with finite differences in the SAME parameter space as the optimizer (θ).
-        """
-        r = np.asarray(r, dtype=float).copy()
-        n = r.size
-        g = np.zeros_like(r)
-
-        def _clamp(val, i):
-            return float(min(self.bounds.ub[i], max(self.bounds.lb[i], val)))
-
-        f0 = None
-        if scheme in ("forward", "backward"):
-            f0 = float(self.density_constraint(r))
-
-        for i in range(n):
-            if scheme == "forward":
-                rp = r.copy()
-                rp[i] = _clamp(rp[i] + eps, i)
-                if rp[i] == r[i]:
-                    rm = r.copy()
-                    rm[i] = _clamp(rm[i] - eps, i)
-                    fm = float(self.density_constraint(rm))
-                    denom = r[i] - rm[i]
-                    g[i] = (f0 - fm) / max(denom, 1e-16)
-                else:
-                    fp = float(self.density_constraint(rp))
-                    denom = rp[i] - r[i]
-                    g[i] = (fp - f0) / max(denom, 1e-16)
-
-            elif scheme == "backward":
-                rm = r.copy()
-                rm[i] = _clamp(rm[i] - eps, i)
-                if rm[i] == r[i]:
-                    rp = r.copy()
-                    rp[i] = _clamp(rp[i] + eps, i)
-                    fp = float(self.density_constraint(rp))
-                    denom = rp[i] - r[i]
-                    g[i] = (fp - f0) / max(denom, 1e-16)
-                else:
-                    fm = float(self.density_constraint(rm))
-                    denom = r[i] - rm[i]
-                    g[i] = (f0 - fm) / max(denom, 1e-16)
-
-            else:  # central
-                rp = r.copy(); rm = r.copy()
-                rp[i] = _clamp(rp[i] + eps, i)
-                rm[i] = _clamp(rm[i] - eps, i)
-
-                if rp[i] == rm[i]:
-                    rp2 = r.copy()
-                    rp2[i] = _clamp(rp2[i] + eps, i)
-                    f0c = float(self.density_constraint(r))
-                    fp2 = float(self.density_constraint(rp2))
-                    denom = rp2[i] - r[i]
-                    g[i] = (fp2 - f0c) / max(denom, 1e-16)
-                else:
-                    fp = float(self.density_constraint(rp))
-                    fm = float(self.density_constraint(rm))
-                    denom = rp[i] - rm[i]
-                    g[i] = (fp - fm) / max(denom, 1e-16)
-
-        self.set_optimization_parameters(list(r))
-        return g
-
+    @timing.category("optimization")
+    @timing.timeit
     def objective(self, r) -> float:
         """
         Objective function for the optimization
@@ -664,153 +439,14 @@ class LatticeOpti(LatticeSim):
         print("Actual objective", self.actual_objective)
         return self.actual_objective
 
-    def _ensure_norm_scale_initialized(self, reference_value: float | None) -> None:
-        """
-        Initialize the normalization scale C_0 once (and only once).
-        """
-        if not self.enable_normalization:
-            self.initial_value_objective = None
-            return
-        if self.initial_value_objective is None:
-            s = abs(float(reference_value)) if reference_value is not None else 1.0
-            if s == 0.0:
-                s = 1.0  # robust fallback
-            self.initial_value_objective = s
-            print("Initial objective value (scale): ", self.initial_value_objective)
-
-    def normalize_objective(self, value: float) -> float:
-        """
-        Return C/C_0 when normalization is enabled; otherwise return C.
-        """
-        if not self.enable_normalization:
-            return float(value)
-        if self.initial_value_objective is None:
-            self._ensure_norm_scale_initialized(value)
-
-        return float(value) / self.initial_value_objective
-
-    def _to_normalized_theta_space(self, grad_dr: np.ndarray) -> np.ndarray:
-        """
-        Map gradient from physical radii space (dC/dr) to the optimizer's
-        normalized parameter space (d(C/C0)/dθ), where:
-          C0 = self.initial_value_objective (first objective value, >0)
-          r  = min_radius + θ * (max_radius - min_radius)
-        so: d(C/C0)/dθ = (1/C0) * dC/dr * (max_radius - min_radius)
-        """
-        if not self.enable_normalization:
-            return grad_dr
-        if self.initial_value_objective in (None, 0.0):
-            raise RuntimeError("Normalization scale not initialized; call objective() once before grad.")
-        return grad_dr * (self.max_radius - self.min_radius) / self.initial_value_objective
-
-
-    def _simulate_lattice_equilibrium(self):
-        """
-        Simulate the lattice equilibrium using the internal solver.
-        """
-        self._initialize_simulation_parameters()
-        if self._simulation_type == "FEM":
-            solve_FEM_FenicsX(self)
-        elif self._simulation_type == "DDM":
-            self.solve_DDM()
-        else:
-            raise ValueError("Invalid simulation type for optimization. Choose 'FEM' or 'DDM'.")
-
-        self._sim_is_current = True
-
-    def get_radius_continuity_difference(self, delta: float = 0.01) -> list[float]:
-        """
-        Get the difference in radii between connected beams in the lattice
-
-        Parameters:
-        -----------
-        delta: float
-            Minimum difference in radii between connected cells
-        """
-        radiusContinuityDifference = []
-        for cell in self.cells:
-            radiusCell = cell.radii
-            for neighbours in cell.get_all_cell_neighbours():
-                for rad in range(len(radiusCell)):
-                    radiusContinuityDifference.append((radiusCell[rad] - neighbours.radii[rad]) ** 2 - delta ** 2)
-        return radiusContinuityDifference
-
-    def get_radius_continuity_jacobian(self) -> np.ndarray:
-        """
-        Compute the Jacobian of the radii continuity constraint.
-
-        Returns:
-        --------
-        np.ndarray
-            Jacobian matrix of shape (num_constraints, num_radii)
-        """
-        rows = []
-        cols = []
-        values = []
-        constraint_index = 0
-
-        for cell in self.cells:
-            radiusCell = cell.radii
-            for neighbour in cell.get_all_cell_neighbours():
-                radiusNeighbour = neighbour.radii
-                for rad in range(len(radiusCell)):
-                    i = cell.index * len(radiusCell) + rad
-                    j = neighbour.index * len(radiusCell) + rad
-                    diff = radiusCell[rad] - radiusNeighbour[rad]
-
-                    rows.append(constraint_index)
-                    cols.append(i)
-                    values.append(2 * diff)
-
-                    rows.append(constraint_index)
-                    cols.append(j)
-                    values.append(-2 * diff)
-
-                    constraint_index += 1
-
-        jacobian = np.zeros((constraint_index, self.get_number_parameters_optimization()))
-        for r, c, v in zip(rows, cols, values):
-            jacobian[r, c] = v
-
-        return jacobian
-
-    def define_relative_density_function(self, degree: int = 3) -> None:
-        """
-        Define relative density function
-        Possible to define a more complex function with dependency on hybrid cells
-
-        Parameters:
-        -----------
-        degree: int
-            Degree of the polynomial function
-        """
-        if len(self.relative_density_poly) == 0:
-            fictiveCell = Cell([0, 0, 0], [self.cell_size_x, self.cell_size_y, self.cell_size_z], [0, 0, 0],
-                               self.geom_types, self.radii, self.grad_radius, self.grad_dim, self.grad_mat,
-                               self.uncertainty_node, self._verbose)
-            domainRadius = np.linspace(0.01, 0.1, 10)
-            for idxRad in range(len(self.radii)):
-                radius = np.zeros(len(self.radii))
-                relativeDensity = []
-                for domainIdx in domainRadius:
-                    radius[idxRad] = domainIdx
-                    fictiveCell.change_beam_radius([radius])
-                    relativeDensity.append(fictiveCell.relative_density())
-                poly_coeffs = np.polyfit(domainRadius, relativeDensity, degree).flatten()
-                poly = np.poly1d(poly_coeffs)
-                self.relative_density_poly.append(poly)
-                self.relative_density_poly_deriv.append(poly.deriv())
-
     def set_optimization_parameters(self, optimization_parameters_actual: list[float]) -> None:
         """
         Set optimization parameters for the lattice
 
         Parameters:
         -----------
-        optimizationParameters: list of float
-            List of optimization parameters
-        geomScheme: list of bool
-            List of N boolean values indicating the scheme of geometry to optimize
+        optimization_parameters_actual: list of float
+            List of actual optimization parameters
         """
 
         if len(optimization_parameters_actual) != self.number_parameters:
@@ -898,61 +534,27 @@ class LatticeOpti(LatticeSim):
         if self._simulation_type == "DDM":
             self._update_DDM_after_geometry_change()
 
-
-    def denormalize_optimization_parameters(self, r_norm: list[float]) -> list[float]:
+    @timing.category("optimization")
+    @timing.timeit
+    def _simulate_lattice_equilibrium(self):
         """
-        Denormalize optimization parameters
-
-        Parameters:
-        -----------
-        r_norm: list of float
-            List of normalized optimization parameters
-
-        Returns:
-        --------
-        r: list of float
-            List of denormalized optimization parameters
+        Simulate the lattice equilibrium using the internal solver.
         """
-        if not self.enable_normalization:
-            return r_norm
-        r = []
-        for val in r_norm:
-            denorm_val = self._clamp_radius(val * (self.max_radius - self.min_radius) + self.min_radius)
-            r.append(denorm_val)
-        return r
+        self._initialize_simulation_parameters()
+        if self._simulation_type == "FEM":
+            solve_FEM_FenicsX(self)
+        elif self._simulation_type == "DDM":
+            self.solve_DDM()
+        else:
+            raise ValueError("Invalid simulation type for optimization. Choose 'FEM' or 'DDM'.")
 
-    def normalize_optimization_parameters(self, r: list[float]) -> list[float]:
-        """
-        Normalize optimization parameters
+        self._sim_is_current = True
 
-        Parameters:
-        -----------
-        r: list of float
-            List of denormalized optimization parameters
-
-        Returns:
-        --------
-        r_norm: list of float
-            List of normalized optimization parameters
-        """
-        if not self.enable_normalization:
-            return r
-        r_norm = []
-        for val in r:
-            if val < self.min_radius or val > self.max_radius:
-                raise ValueError("Optimization parameter out of bounds.")
-            norm_val = (val - self.min_radius) / (self.max_radius - self.min_radius)
-            r_norm.append(norm_val)
-        return r_norm
-
+    @timing.category("optimization")
+    @timing.timeit
     def calculate_objective(self) -> float:
         """
         Calculate objective function for the lattice optimization
-
-        Parameters
-        ----------
-        typeObjective: str
-            Type of objective function to calculate (Compliance...)
 
         Returns
         -------
@@ -1013,6 +615,8 @@ class LatticeOpti(LatticeSim):
             raise ValueError("Invalid objective function type.")
         return objective
 
+    @timing.category("optimization")
+    @timing.timeit
     def compute_compliance(self) -> float:
         """
         Compliance (external work of applied loads):
@@ -1033,6 +637,8 @@ class LatticeOpti(LatticeSim):
                     total += coefficient
         return float(total)
 
+    @timing.category("optimization")
+    @timing.timeit
     def compute_global_energy(self) -> float:
         """
         Global external work = global strain energy
@@ -1046,35 +652,33 @@ class LatticeOpti(LatticeSim):
                     total += f * u[k]
         return 0.5 * total
 
+    @timing.category("optimization")
+    @timing.timeit
     def compute_global_energy_ddm(self) -> float:
+        """
+        Global external work = global strain energy for DDM simulation
+
+        Returns:
+        --------
+        energy: float
+            Global strain energy
+        """
         x, _ = self.get_global_displacement_DDM()  # vecteur des DOF libres (ordre canonique)
         y = self.calculate_reaction_force_global(x)  # y = S_global @ x
         return 0.5 * float(np.dot(x, y))
 
-    def _set_number_parameters_optimization(self):
-        """
-        Set number of parameters for optimization
-        """
-        if self.optimization_parameters["type"] == "unit_cell":
-            numParameters = 0
-            for cell in self.cells:
-                numParameters += len(cell.radii)
-            self.number_parameters = numParameters
-        elif self.optimization_parameters["type"] == "linear":
-            self._build_radius_field()
-        elif self.optimization_parameters["type"] == "constant":
-            if self.optimization_parameters.get("hybrid", False):
-                self.number_parameters = len(self.geom_types)
-            else:
-                self.number_parameters = 1
-        else:
-            raise ValueError("Invalid optimization parameters type.")
+    # =============================================================================
+    # SECTION: Gradient methods
+    # =============================================================================
 
+    @timing.category("optimization")
+    @timing.timeit
     def gradient(self, r: list[float]) -> np.ndarray:
         """
         Gradient function for the optimization
 
         Parameters:
+        -----------
         r: list of float
             List of optimization parameters
         """
@@ -1101,243 +705,18 @@ class LatticeOpti(LatticeSim):
         print("Gradient:", g)
         return g
 
-    # def calculate_gradient(self):
-    #     """
-    #     Compute d(objective)/d(params) for the current state.
-    #     Assumes objective_type == 'compliance' with imposed-DOF-only definition.
-    #     """
-    #     # if self.objective_type != "compliance":
-    #     #     raise NotImplementedError("Gradient currently implemented for 'compliance' objective only.")
-    #
-    #     n_params = self.number_parameters
-    #     grad = np.zeros(n_params, dtype=float)
-    #     half_factor = 0.5
-    #
-    #     # Normalization chain rule (dr / dθ) if parameters are normalized in [0,1]
-    #     norm_scale = (self.max_radius - self.min_radius) if self.enable_normalization else 1.0
-    #
-    #     n_geom = len(self.geom_types)
-    #     opt_type = self.optimization_parameters["type"]
-    #
-    #     if opt_type == "unit_cell":
-    #         for cell in self.cells:
-    #             if cell.node_in_order_simulation is None:
-    #                 cell.define_node_order_to_simulate()
-    #
-    #             # u_cell in the same order used by the Schur complement
-    #             u_cell = np.array(cell.get_displacement_at_nodes(cell.node_in_order_simulation), dtype=float).ravel()
-    #
-    #             # For each local radius parameter (aligned with cell.radii / schur_complement_grads)
-    #             for j_local, dS in enumerate(getattr(cell, "schur_complement_gradient", [])):
-    #                 # dF_cell = dS/dr_j @ u_cell
-    #                 dF_cell = dS @ u_cell  # vector length = (#bnd_nodes_in_order * 6)
-    #                 contrib = u_cell @ dF_cell  # scalar
-    #
-    #                 p_idx = cell.index * n_geom + j_local
-    #                 grad[p_idx] += contrib
-    #
-    #     elif opt_type == "constant":
-    #         hybrid = bool(self.optimization_parameters.get("hybrid", False))
-    #
-    #         if hybrid:
-    #             accum = np.zeros(n_geom, dtype=float)
-    #             for cell in self.cells:
-    #                 if cell.node_in_order_simulation is None:
-    #                     cell.define_node_order_to_simulate()
-    #                 u_cell = np.array(cell.get_displacement_at_nodes(cell.node_in_order_simulation),
-    #                                   dtype=float).ravel()
-    #                 for j_local, dS in enumerate(getattr(cell, "schur_complement_gradient", [])):
-    #                     dF_cell = dS @ u_cell
-    #                     accum[j_local] += float(u_cell @ dF_cell)
-    #             grad[:n_geom] = accum
-    #         else:
-    #             total_contrib = 0.0
-    #             for cell in self.cells:
-    #                 if cell.node_in_order_simulation is None:
-    #                     cell.define_node_order_to_simulate()
-    #                 u_cell = np.array(cell.get_displacement_at_nodes(cell.node_in_order_simulation),
-    #                                   dtype=float).ravel()
-    #                 for dS in getattr(cell, "schur_complement_gradient", []):
-    #                     dF_cell = dS @ u_cell
-    #                     total_contrib += float(u_cell @ dF_cell)
-    #             grad[0] = total_contrib
-    #
-    #     else:
-    #         raise NotImplementedError("Gradient for optimization type '{opt_type}' not implemented yet.")
-    #
-    #     return grad
-
-    # add these helpers inside class LatticeOpti
-
-    def _build_displacement_rhs_global(self) -> np.ndarray:
-        """
-        Assemble q = ∂J/∂u for the displacement-type objectives
-        in the *global FREE boundary-DOF ordering* used by the Schur solve.
-
-        Supports:
-        ---------
-        - objective_type == "displacement":
-            J = mean(|u_k|) over selected nodes/DOFs.
-        - objective_type == "displacement_ratio":
-            J = (u_out + u_in)^2  (forces u_out ≈ -u_in, i.e. inverse mechanism).
-
-        Also builds a per-cell mapping to recover adjoint components back to each
-        cell block in the *full* (nb_nodes*6) boundary ordering:
-            self._adjoint_map = [
-                {
-                  "offset_full": int,                 # start index of cell block in full concatenation
-                  "m_full": int,                      # block length = nb_nodes*6
-                  "free_local_idx": List[int],        # positions (0..m_full-1) that are free in this cell
-                }, ...
-            ]
-        """
-        # --- 1) free-DOF vector and its index map ---
-        x_free, free_idx = self.get_global_displacement_DDM()
-        x_free = np.asarray(x_free, dtype=float)
-        free_idx = np.asarray(free_idx, dtype=int)
-        n_free = x_free.size
-
-        dof_map = {"X": 0, "Y": 1, "Z": 2, "RX": 3, "RY": 4, "RZ": 5}
-        q_blocks = []
-        offset_full = 0
-        adjoint_map = []
-
-        # --- 2) case: standard displacement objective ---
-        if self.objective_type == "displacement":
-            set_nodes = self.find_point_on_lattice_surface(surfaceNames=self.objectif_data["Surface"])
-            target = set(set_nodes)
-            comps = [dof_map[d] for d in self.objectif_data["DOF"]]
-
-            n_terms = 0
-            for cell in self.cells:
-                if cell.node_in_order_simulation is None:
-                    cell.define_node_order_to_simulate()
-
-                nb_nodes = len(cell.node_in_order_simulation)
-                m_full = nb_nodes * 6
-                q_cell = np.zeros(m_full, dtype=float)
-
-                for i_node, node in enumerate(cell.node_in_order_simulation):
-                    if node in target:
-                        for k in comps:
-                            n_terms += 1
-                            val = node.displacement_vector[k]
-                            q_cell[i_node * 6 + k] = np.sign(val)
-
-                free_local_idx = []
-                for i_node, node in enumerate(cell.node_in_order_simulation):
-                    for k in range(6):
-                        if not node.fixed_DOF[k]:
-                            free_local_idx.append(i_node * 6 + k)
-
-                q_blocks.append(q_cell)
-                adjoint_map.append({
-                    "offset_full": offset_full,
-                    "m_full": m_full,
-                    "free_local_idx": free_local_idx,
-                })
-                offset_full += m_full
-
-            if n_terms > 0:
-                q_blocks = [qb / max(1, np.sqrt(n_terms)) for qb in q_blocks]
-
-        # --- 3) case: displacement ratio (inverse mechanism) ---
-        elif self.objective_type == "displacement_ratio":
-            bd_dict = self.boundary_conditions
-            if bd_dict.get("Force", None) is not None:
-                bd_dict = bd_dict["Force"]
-            elif bd_dict.get("Displacement", None) is not None:
-                bd_dict = bd_dict["Displacement"]
-            else:
-                raise ValueError("No boundary conditions defined for displacement ratio objective.")
-            nodes_in = self.find_point_on_lattice_surface(surfaceNames=bd_dict["Load"]["Surface"])
-            nodes_out = self.find_point_on_lattice_surface(surfaceNames=self.objectif_data["Surface"])
-            comps_in = [dof_map[d] for d in bd_dict["Load"]["DOF"]]
-            comps_out = [dof_map[d] for d in self.objectif_data["DOF"]]
-
-            # compute mean displacements
-            u_in = np.mean([n.displacement_vector[c] for n in nodes_in for c in comps_in])
-            u_out = np.mean([n.displacement_vector[c] for n in nodes_out for c in comps_out])
-
-            coeff_out = -u_in
-            coeff_in = -u_out
-
-            for cell in self.cells:
-                if cell.node_in_order_simulation is None:
-                    cell.define_node_order_to_simulate()
-
-                nb_nodes = len(cell.node_in_order_simulation)
-                m_full = nb_nodes * 6
-                q_cell = np.zeros(m_full, dtype=float)
-
-                for i_node, node in enumerate(cell.node_in_order_simulation):
-                    if node in nodes_out:
-                        for k in comps_out:
-                            q_cell[i_node * 6 + k] += coeff_out / len(nodes_out)
-                    if node in nodes_in:
-                        for k in comps_in:
-                            q_cell[i_node * 6 + k] += coeff_in / len(nodes_in)
-
-                free_local_idx = []
-                for i_node, node in enumerate(cell.node_in_order_simulation):
-                    for k in range(6):
-                        if not node.fixed_DOF[k]:
-                            free_local_idx.append(i_node * 6 + k)
-
-                q_blocks.append(q_cell)
-                adjoint_map.append({
-                    "offset_full": offset_full,
-                    "m_full": m_full,
-                    "free_local_idx": free_local_idx,
-                })
-                offset_full += m_full
-
-        else:
-            raise NotImplementedError(f"_build_displacement_rhs_global not implemented for {self.objective_type}")
-
-        # --- 4) concatenate & restrict to free DOFs ---
-        q_full = np.concatenate(q_blocks) if q_blocks else np.zeros(0, dtype=float)
-        q_free = q_full[free_idx]
-
-        if q_free.size != n_free:
-            raise RuntimeError(f"Adjoint RHS size mismatch: got {q_free.size}, expected {n_free}")
-
-        self._adjoint_map = adjoint_map
-        return q_free
-
-    def _solve_adjoint_vector(self, q: np.ndarray) -> np.ndarray:
-        """
-        Solve S λ = q using the same Schur matvec used during DDM solves.
-
-        Parameters
-        ----------
-        q : np.ndarray
-            RHS assembled in the global Schur ordering.
-
-        Returns
-        -------
-        lam : np.ndarray
-            Adjoint vector λ in the same global ordering.
-        """
-        from scipy.sparse.linalg import LinearOperator
-
-        n = q.size
-
-        def matvec(v: np.ndarray) -> np.ndarray:
-            return self.calculate_reaction_force_global(v)
-
-        Sop = LinearOperator((n, n), matvec=matvec, dtype=float)
-        lam, info = conjugate_gradient_solver(Sop, q, tol=1e-10, maxiter=2000)
-        if info != 0 and self._verbose > 0:
-            print(Fore.YELLOW + f"Warning: adjoint CG did not fully converge (info={info})." + Fore.RESET)
-        return lam
-
+    @timing.category("optimization")
+    @timing.timeit
     def calculate_gradient(self):
         """
         Compute d(objective)/d(params) for the current state.
         - 'compliance': u^T (dS/dr) u (per parameter block).
         - 'displacement': λ^T (dS/dr) u with adjoint S λ = ∂J/∂u, J = average of |selected DOFs|.
-          NOTE: gradient() applies a global negative sign afterwards.
+
+        Returns:
+        --------
+        grad: np.ndarray
+            Gradient vector
         """
         if self.objective_type == "compliance":
             n_params = self.number_parameters
@@ -1502,6 +881,8 @@ class LatticeOpti(LatticeSim):
             raise NotImplementedError(
                 "Gradient currently implemented for 'compliance' and 'displacement' objectives only.")
 
+    @timing.category("optimization")
+    @timing.timeit
     def finite_difference_gradient(self, r, eps: float = 1e-6, scheme: str = "central") -> np.ndarray:
         """
         Approximate the gradient of the *normalized* objective w.r.t. the optimizer parameters
@@ -1511,8 +892,10 @@ class LatticeOpti(LatticeSim):
         ----------
         r : array-like
             Current optimization parameters (normalized if enable_normalization=True).
+
         eps : float
             Finite-difference step (applied in the same space as `r`).
+
         scheme : {"central","forward","backward"}
             Finite-difference scheme.
 
@@ -1596,7 +979,651 @@ class LatticeOpti(LatticeSim):
         return g
 
 
-    @timingOpti.timeit
+    # =============================================================================
+    # SECTION: Density constraint methods
+    # =============================================================================
+    @timing.category("optimization")
+    @timing.timeit
+    def density_constraint(self, r):
+        """
+        Density constraint function
+
+        Parameters:
+        -----------
+        r: list of float
+            List of optimization parameters
+        """
+        print(Fore.LIGHTGREEN_EX + "Density constraint function" + Fore.RESET)
+        self.set_optimization_parameters(r)
+        densConstraint = self.get_relative_density_constraint()
+        # if self.densConstraintInitial is None:
+        #     self.densConstraintInitial = densConstraint
+        # densConstraint = densConstraint/self.densConstraintInitial
+        if self._verbose > 0:
+            print("Density constraint: ", densConstraint)
+        return densConstraint
+
+    @timing.category("optimization")
+    @timing.timeit
+    def density_constraint_gradient(self, r):
+        """
+        Density constraint gradient function
+
+        Parameters:
+        -----------
+        r: list of float
+            List of optimization parameters
+        """
+        print(Fore.LIGHTBLUE_EX + "Density constraint gradient function" + Fore.RESET)
+        self.set_optimization_parameters(r)
+        # gradDensConstraint = self.get_relative_density_gradient_kriging()
+
+        if self.optimization_parameters["type"] != "linear" and self.compute_gradient_relative_density:
+            gradDensConstraint = self.get_relative_density_gradient_kriging()
+        else:
+            gradDensConstraint = self.finite_difference_density_gradient(r, eps=1e-2, scheme="central")
+        print("Density constraint gradient: ", gradDensConstraint)
+        # gradDensConstraint = gradDensConstraint/self.densConstraintInitial
+        return gradDensConstraint
+
+    @timing.category("optimization")
+    @timing.timeit
+    def get_relative_density_constraint(self) -> float:
+        """
+        Get relative density of the lattice
+        """
+        relativeDensity = self.get_relative_density()
+        error = relativeDensity - self.relative_density_objective
+        if self._verbose > 0:
+            print("Relative density: ", relativeDensity)
+            print("Relative density maximum: ", self.relative_density_objective)
+            print("Relative density error: ", error)
+        return error
+
+    @timing.category("optimization")
+    @timing.timeit
+    def get_relative_density(self) -> float:
+        """
+        Get mean relative density of all cells in lattice
+
+        Returns:
+        --------
+        meanRelDens: float
+            Mean relative density of the lattice
+        """
+        cellRelDens = []
+        for cell in self.cells:
+            if self.relative_density_direct_computation:
+                relative_dens = self.generate_mesh_lattice_Gmsh(volume_computation=True, cut_mesh_at_boundary=True,
+                                                     save_STL=False, only_relative_density=True,
+                                                     cell_index=cell.index)
+                print(f"Cell {cell.index} relative density (direct computation): {relative_dens}")
+                cellRelDens.append(relative_dens)
+            elif self._simulation_flag and self.kriging_model_relative_density is not None:
+                cellRelDens.append(cell.get_relative_density_kriging(self.kriging_model_relative_density))
+            else:
+                cellRelDens.append(cell.relative_density)
+        meanRelDens = mean(cellRelDens)
+        return meanRelDens
+
+    @timing.category("optimization")
+    @timing.timeit
+    def get_relative_density_gradient(self) -> list[float]:
+        """
+        Get relative density gradient of the lattice
+
+        Returns:
+        --------
+        grad: list of float
+            Gradient of relative density
+        """
+        if len(self.relative_density_poly) == 0:
+            self.define_relative_density_function()
+        if len(self.cells[0].radii) != len(self.relative_density_poly):
+            raise ValueError("Invalid radii data.")
+
+        grad = []
+        for cell in self.cells:
+            grad.append(cell.get_relative_density_gradient())
+        return grad
+
+    @timing.category("optimization")
+    @timing.timeit
+    def get_relative_density_gradient_kriging(self) -> np.array:
+        """
+        Get relative density gradient of the lattice using kriging model
+
+        Returns:
+        --------
+        grad: list of float
+            Gradient of relative density
+        """
+        if self.optimization_parameters["type"] == "unit_cell":
+            n_cells = len(self.cells)
+            n_geom = len(self.geom_types)
+            grad = np.zeros(self.number_parameters, dtype=float)
+            scale = (self.max_radius - self.min_radius) if self.enable_normalization else 1.0
+
+            for cell in self.cells:
+                g_cell_exact = np.asarray(
+                    cell.get_relative_density_gradient_kriging_exact(
+                        self.kriging_model_relative_density,
+                        self.kriging_model_geometries_types
+                    ),
+                    dtype=float
+                )
+
+                if g_cell_exact.size != n_geom:
+                    raise ValueError(f"Gradient size mismatch: expected {n_geom}, got {g_cell_exact.size}")
+
+                start = cell.index * n_geom
+                grad[start:start + n_geom] = (g_cell_exact * scale) / n_cells
+
+            return grad
+        elif self.optimization_parameters["type"] == "linear":
+            numberOfCells = len(self.cells)
+            grad = np.zeros(self.number_parameters)
+            dirs = self.optimization_parameters.get("direction", [])
+            if not dirs:
+                raise ValueError("No directions provided for linear optimization.")
+            valid_dirs = {"x", "y", "z"}
+            if any(d not in valid_dirs for d in dirs):
+                raise ValueError(f"Invalid direction in {dirs}; valid are 'x', 'y', 'z'.")
+            coeffs = {"x": 0.0, "y": 0.0, "z": 0.0}
+            for i, dkey in enumerate(dirs):
+                coeffs[dkey] = float(self.initial_parameters[i])
+            d_intercept = float(self.initial_parameters[-1])
+
+            for cell in self.cells:
+                cx, cy, cz = cell.center_point
+                value = coeffs["x"] * cx + coeffs["y"] * cy + coeffs["z"] * cz + d_intercept
+                value = max(self.min_radius, min(self.max_radius, value))
+                gradient3Geom = cell.get_relative_density_gradient_kriging(
+                    self.kriging_model_relative_density, self.kriging_model_geometries_types) / numberOfCells
+                for i, dkey in enumerate(dirs):
+                    grad[i] += gradient3Geom[0] * cx if dkey == "x" else gradient3Geom[1] * cy if dkey == "y" else gradient3Geom[2] * cz
+                grad[-1] += sum(gradient3Geom)
+            return grad
+        elif self.optimization_parameters["type"] == "constant":
+            n_cells = len(self.cells)
+            hybrid = bool(self.optimization_parameters.get("hybrid", False))
+            n_geom = len(self.geom_types)
+            scale = (self.max_radius - self.min_radius) if self.enable_normalization else 1.0
+
+            if hybrid:
+                grad = np.zeros(n_geom, dtype=float)
+                for cell in self.cells:
+                    g_cell = np.asarray(
+                        cell.get_relative_density_gradient_kriging(
+                            self.kriging_model_relative_density,
+                            self.kriging_model_geometries_types
+                        ),
+                        dtype=float
+                    )
+                    grad += g_cell
+                grad /= n_cells
+                grad *= scale
+                return grad
+            else:
+                g_total = 0.0
+                for cell in self.cells:
+                    g_cell = np.asarray(
+                        cell.get_relative_density_gradient_kriging(
+                            self.kriging_model_relative_density,
+                            self.kriging_model_geometries_types
+                        ),
+                        dtype=float
+                    )
+                    g_total += float(np.sum(g_cell))
+                g_total /= n_cells
+                g_total *= scale
+                return np.array([g_total], dtype=float)
+        else:
+            raise ValueError("Invalid optimization parameters type.")
+
+    @timing.category("optimization")
+    @timing.timeit
+    def finite_difference_density_gradient(self, r, eps: float = 1e-2, scheme: str = "central") -> np.ndarray:
+        """
+        Approximate the gradient of the density constraint g(θ) = ρ̄(θ) - ρ_target
+        with finite differences in the SAME parameter space as the optimizer (θ).
+
+        Parameters:
+        -----------
+        r: list of float
+            List of optimization parameters
+
+        eps: float
+            Finite difference step size
+
+        scheme: str
+            Finite difference scheme: "forward", "backward", or "central"
+        """
+        r = np.asarray(r, dtype=float).copy()
+        n = r.size
+        g = np.zeros_like(r)
+
+        def _clamp(val, i):
+            return float(min(self.bounds.ub[i], max(self.bounds.lb[i], val)))
+
+        f0 = None
+        if scheme in ("forward", "backward"):
+            f0 = float(self.density_constraint(r))
+
+        for i in range(n):
+            if scheme == "forward":
+                rp = r.copy()
+                rp[i] = _clamp(rp[i] + eps, i)
+                if rp[i] == r[i]:
+                    rm = r.copy()
+                    rm[i] = _clamp(rm[i] - eps, i)
+                    fm = float(self.density_constraint(rm))
+                    denom = r[i] - rm[i]
+                    g[i] = (f0 - fm) / max(denom, 1e-16)
+                else:
+                    fp = float(self.density_constraint(rp))
+                    denom = rp[i] - r[i]
+                    g[i] = (fp - f0) / max(denom, 1e-16)
+
+            elif scheme == "backward":
+                rm = r.copy()
+                rm[i] = _clamp(rm[i] - eps, i)
+                if rm[i] == r[i]:
+                    rp = r.copy()
+                    rp[i] = _clamp(rp[i] + eps, i)
+                    fp = float(self.density_constraint(rp))
+                    denom = rp[i] - r[i]
+                    g[i] = (fp - f0) / max(denom, 1e-16)
+                else:
+                    fm = float(self.density_constraint(rm))
+                    denom = r[i] - rm[i]
+                    g[i] = (f0 - fm) / max(denom, 1e-16)
+
+            else:  # central
+                rp = r.copy(); rm = r.copy()
+                rp[i] = _clamp(rp[i] + eps, i)
+                rm[i] = _clamp(rm[i] - eps, i)
+
+                if rp[i] == rm[i]:
+                    rp2 = r.copy()
+                    rp2[i] = _clamp(rp2[i] + eps, i)
+                    f0c = float(self.density_constraint(r))
+                    fp2 = float(self.density_constraint(rp2))
+                    denom = rp2[i] - r[i]
+                    g[i] = (fp2 - f0c) / max(denom, 1e-16)
+                else:
+                    fp = float(self.density_constraint(rp))
+                    fm = float(self.density_constraint(rm))
+                    denom = rp[i] - rm[i]
+                    g[i] = (fp - fm) / max(denom, 1e-16)
+
+        self.set_optimization_parameters(list(r))
+        return g
+
+
+    def define_relative_density_function(self, degree: int = 3) -> None:
+        """
+        Define relative density function
+        Possible to define a more complex function with dependency on hybrid cells
+
+        Parameters:
+        -----------
+        degree: int
+            Degree of the polynomial function
+        """
+        if len(self.relative_density_poly) == 0:
+            fictiveCell = Cell([0, 0, 0], [self.cell_size_x, self.cell_size_y, self.cell_size_z], [0, 0, 0],
+                               self.geom_types, self.radii, self.grad_radius, self.grad_dim, self.grad_mat,
+                               self.uncertainty_node, self._verbose)
+            domainRadius = np.linspace(0.01, 0.1, 10)
+            for idxRad in range(len(self.radii)):
+                radius = np.zeros(len(self.radii))
+                relativeDensity = []
+                for domainIdx in domainRadius:
+                    radius[idxRad] = domainIdx
+                    fictiveCell.change_beam_radius([radius])
+                    relativeDensity.append(fictiveCell.relative_density())
+                poly_coeffs = np.polyfit(domainRadius, relativeDensity, degree).flatten()
+                poly = np.poly1d(poly_coeffs)
+                self.relative_density_poly.append(poly)
+                self.relative_density_poly_deriv.append(poly.deriv())
+
+    # =============================================================================
+    # SECTION: Normalization methods
+    # =============================================================================
+    def _ensure_norm_scale_initialized(self, reference_value: float | None) -> None:
+        """
+        Initialize the normalization scale C_0 once (and only once).
+        """
+        if not self.enable_normalization:
+            self.initial_value_objective = None
+            return
+        if self.initial_value_objective is None:
+            s = abs(float(reference_value)) if reference_value is not None else 1.0
+            if s == 0.0:
+                s = 1.0  # robust fallback
+            self.initial_value_objective = s
+            print("Initial objective value (scale): ", self.initial_value_objective)
+
+    def normalize_objective(self, value: float) -> float:
+        """
+        Return C/C_0 when normalization is enabled; otherwise return C.
+        """
+        if not self.enable_normalization:
+            return float(value)
+        if self.initial_value_objective is None:
+            self._ensure_norm_scale_initialized(value)
+
+        return float(value) / self.initial_value_objective
+
+    def _to_normalized_theta_space(self, grad_dr: np.ndarray) -> np.ndarray:
+        """
+        Map gradient from physical radii space (dC/dr) to the optimizer's
+        normalized parameter space (d(C/C0)/dθ), where:
+          C0 = self.initial_value_objective (first objective value, >0)
+          r  = min_radius + θ * (max_radius - min_radius)
+        so: d(C/C0)/dθ = (1/C0) * dC/dr * (max_radius - min_radius)
+        """
+        if not self.enable_normalization:
+            return grad_dr
+        if self.initial_value_objective in (None, 0.0):
+            raise RuntimeError("Normalization scale not initialized; call objective() once before grad.")
+        return grad_dr * (self.max_radius - self.min_radius) / self.initial_value_objective
+
+
+    def denormalize_optimization_parameters(self, r_norm: list[float]) -> list[float]:
+        """
+        Denormalize optimization parameters
+
+        Parameters:
+        -----------
+        r_norm: list of float
+            List of normalized optimization parameters
+
+        Returns:
+        --------
+        r: list of float
+            List of denormalized optimization parameters
+        """
+        if not self.enable_normalization:
+            return r_norm
+        r = []
+        for val in r_norm:
+            denorm_val = self._clamp_radius(val * (self.max_radius - self.min_radius) + self.min_radius)
+            r.append(denorm_val)
+        return r
+
+    def normalize_optimization_parameters(self, r: list[float]) -> list[float]:
+        """
+        Normalize optimization parameters
+
+        Parameters:
+        -----------
+        r: list of float
+            List of denormalized optimization parameters
+
+        Returns:
+        --------
+        r_norm: list of float
+            List of normalized optimization parameters
+        """
+        if not self.enable_normalization:
+            return r
+        r_norm = []
+        for val in r:
+            if val < self.min_radius or val > self.max_radius:
+                raise ValueError("Optimization parameter out of bounds.")
+            norm_val = (val - self.min_radius) / (self.max_radius - self.min_radius)
+            r_norm.append(norm_val)
+        return r_norm
+
+    # =============================================================================
+    # SECTION: Continuity constraint methods (NOT USED CURRENTLY)
+    # =============================================================================
+    def get_radius_continuity_difference(self, delta: float = 0.01) -> list[float]:
+        """
+        Get the difference in radii between connected beams in the lattice
+
+        Parameters:
+        -----------
+        delta: float
+            Minimum difference in radii between connected cells
+        """
+        radiusContinuityDifference = []
+        for cell in self.cells:
+            radiusCell = cell.radii
+            for neighbours in cell.get_all_cell_neighbours():
+                for rad in range(len(radiusCell)):
+                    radiusContinuityDifference.append((radiusCell[rad] - neighbours.radii[rad]) ** 2 - delta ** 2)
+        return radiusContinuityDifference
+
+    def get_radius_continuity_jacobian(self) -> np.ndarray:
+        """
+        Compute the Jacobian of the radii continuity constraint.
+
+        Returns:
+        --------
+        np.ndarray
+            Jacobian matrix of shape (num_constraints, num_radii)
+        """
+        rows = []
+        cols = []
+        values = []
+        constraint_index = 0
+
+        for cell in self.cells:
+            radiusCell = cell.radii
+            for neighbour in cell.get_all_cell_neighbours():
+                radiusNeighbour = neighbour.radii
+                for rad in range(len(radiusCell)):
+                    i = cell.index * len(radiusCell) + rad
+                    j = neighbour.index * len(radiusCell) + rad
+                    diff = radiusCell[rad] - radiusNeighbour[rad]
+
+                    rows.append(constraint_index)
+                    cols.append(i)
+                    values.append(2 * diff)
+
+                    rows.append(constraint_index)
+                    cols.append(j)
+                    values.append(-2 * diff)
+
+                    constraint_index += 1
+
+        jacobian = np.zeros((constraint_index, self.get_number_parameters_optimization()))
+        for r, c, v in zip(rows, cols, values):
+            jacobian[r, c] = v
+
+        return jacobian
+
+    # =============================================================================
+    # SECTION: Utilities methods
+    # =============================================================================
+
+    def _set_number_parameters_optimization(self):
+        """
+        Set number of parameters for optimization
+        """
+        if self.optimization_parameters["type"] == "unit_cell":
+            numParameters = 0
+            for cell in self.cells:
+                numParameters += len(cell.radii)
+            self.number_parameters = numParameters
+        elif self.optimization_parameters["type"] == "linear":
+            self._build_radius_field()
+        elif self.optimization_parameters["type"] == "constant":
+            if self.optimization_parameters.get("hybrid", False):
+                self.number_parameters = len(self.geom_types)
+            else:
+                self.number_parameters = 1
+        else:
+            raise ValueError("Invalid optimization parameters type.")
+
+    def _build_displacement_rhs_global(self) -> np.ndarray:
+        """
+        Assemble q = ∂J/∂u for the displacement-type objectives
+        in the *global FREE boundary-DOF ordering* used by the Schur solve.
+
+        Supports:
+        ---------
+        - objective_type == "displacement":
+            J = mean(|u_k|) over selected nodes/DOFs.
+        - objective_type == "displacement_ratio":
+            J = (u_out + u_in)^2  (forces u_out ≈ -u_in, i.e. inverse mechanism).
+
+        Also builds a per-cell mapping to recover adjoint components back to each
+        cell block in the *full* (nb_nodes*6) boundary ordering:
+            self._adjoint_map = [
+                {
+                  "offset_full": int,                 # start index of cell block in full concatenation
+                  "m_full": int,                      # block length = nb_nodes*6
+                  "free_local_idx": List[int],        # positions (0..m_full-1) that are free in this cell
+                }, ...
+            ]
+        """
+        # --- 1) free-DOF vector and its index map ---
+        x_free, free_idx = self.get_global_displacement_DDM()
+        x_free = np.asarray(x_free, dtype=float)
+        free_idx = np.asarray(free_idx, dtype=int)
+        n_free = x_free.size
+
+        dof_map = {"X": 0, "Y": 1, "Z": 2, "RX": 3, "RY": 4, "RZ": 5}
+        q_blocks = []
+        offset_full = 0
+        adjoint_map = []
+
+        # --- 2) case: standard displacement objective ---
+        if self.objective_type == "displacement":
+            set_nodes = self.find_point_on_lattice_surface(surfaceNames=self.objectif_data["Surface"])
+            target = set(set_nodes)
+            comps = [dof_map[d] for d in self.objectif_data["DOF"]]
+
+            n_terms = 0
+            for cell in self.cells:
+                if cell.node_in_order_simulation is None:
+                    cell.define_node_order_to_simulate()
+
+                nb_nodes = len(cell.node_in_order_simulation)
+                m_full = nb_nodes * 6
+                q_cell = np.zeros(m_full, dtype=float)
+
+                for i_node, node in enumerate(cell.node_in_order_simulation):
+                    if node in target:
+                        for k in comps:
+                            n_terms += 1
+                            val = node.displacement_vector[k]
+                            q_cell[i_node * 6 + k] = np.sign(val)
+
+                free_local_idx = []
+                for i_node, node in enumerate(cell.node_in_order_simulation):
+                    for k in range(6):
+                        if not node.fixed_DOF[k]:
+                            free_local_idx.append(i_node * 6 + k)
+
+                q_blocks.append(q_cell)
+                adjoint_map.append({
+                    "offset_full": offset_full,
+                    "m_full": m_full,
+                    "free_local_idx": free_local_idx,
+                })
+                offset_full += m_full
+
+            if n_terms > 0:
+                q_blocks = [qb / max(1, np.sqrt(n_terms)) for qb in q_blocks]
+
+        # --- 3) case: displacement ratio (inverse mechanism) ---
+        elif self.objective_type == "displacement_ratio":
+            bd_dict = self.boundary_conditions
+            if bd_dict.get("Force", None) is not None:
+                bd_dict = bd_dict["Force"]
+            elif bd_dict.get("Displacement", None) is not None:
+                bd_dict = bd_dict["Displacement"]
+            else:
+                raise ValueError("No boundary conditions defined for displacement ratio objective.")
+            nodes_in = self.find_point_on_lattice_surface(surfaceNames=bd_dict["Load"]["Surface"])
+            nodes_out = self.find_point_on_lattice_surface(surfaceNames=self.objectif_data["Surface"])
+            comps_in = [dof_map[d] for d in bd_dict["Load"]["DOF"]]
+            comps_out = [dof_map[d] for d in self.objectif_data["DOF"]]
+
+            # compute mean displacements
+            u_in = np.mean([n.displacement_vector[c] for n in nodes_in for c in comps_in])
+            u_out = np.mean([n.displacement_vector[c] for n in nodes_out for c in comps_out])
+
+            coeff_out = -u_in
+            coeff_in = -u_out
+
+            for cell in self.cells:
+                if cell.node_in_order_simulation is None:
+                    cell.define_node_order_to_simulate()
+
+                nb_nodes = len(cell.node_in_order_simulation)
+                m_full = nb_nodes * 6
+                q_cell = np.zeros(m_full, dtype=float)
+
+                for i_node, node in enumerate(cell.node_in_order_simulation):
+                    if node in nodes_out:
+                        for k in comps_out:
+                            q_cell[i_node * 6 + k] += coeff_out / len(nodes_out)
+                    if node in nodes_in:
+                        for k in comps_in:
+                            q_cell[i_node * 6 + k] += coeff_in / len(nodes_in)
+
+                free_local_idx = []
+                for i_node, node in enumerate(cell.node_in_order_simulation):
+                    for k in range(6):
+                        if not node.fixed_DOF[k]:
+                            free_local_idx.append(i_node * 6 + k)
+
+                q_blocks.append(q_cell)
+                adjoint_map.append({
+                    "offset_full": offset_full,
+                    "m_full": m_full,
+                    "free_local_idx": free_local_idx,
+                })
+                offset_full += m_full
+
+        else:
+            raise NotImplementedError(f"_build_displacement_rhs_global not implemented for {self.objective_type}")
+
+        # --- 4) concatenate & restrict to free DOFs ---
+        q_full = np.concatenate(q_blocks) if q_blocks else np.zeros(0, dtype=float)
+        q_free = q_full[free_idx]
+
+        if q_free.size != n_free:
+            raise RuntimeError(f"Adjoint RHS size mismatch: got {q_free.size}, expected {n_free}")
+
+        self._adjoint_map = adjoint_map
+        return q_free
+
+    def _solve_adjoint_vector(self, q: np.ndarray) -> np.ndarray:
+        """
+        Solve S λ = q using the same Schur matvec used during DDM solves.
+
+        Parameters
+        ----------
+        q : np.ndarray
+            RHS assembled in the global Schur ordering.
+
+        Returns
+        -------
+        lam : np.ndarray
+            Adjoint vector λ in the same global ordering.
+        """
+        from scipy.sparse.linalg import LinearOperator
+
+        n = q.size
+
+        def matvec(v: np.ndarray) -> np.ndarray:
+            return self.calculate_reaction_force_global(v)
+
+        Sop = LinearOperator((n, n), matvec=matvec, dtype=float)
+        lam, info = conjugate_gradient_solver(Sop, q, tol=1e-10, maxiter=2000)
+        if info != 0 and self._verbose > 0:
+            print(Fore.YELLOW + f"Warning: adjoint CG did not fully converge (info={info})." + Fore.RESET)
+        return lam
+
+    @timing.category("optimization")
+    @timing.timeit
     def load_relative_density_model(self):
         """
         Load the relative density model from a file
@@ -1621,6 +1648,8 @@ class LatticeOpti(LatticeSim):
             self.kriging_model_geometries_types = self.geom_types
             print(f"Loaded relative density model from {path_model}")
 
+    @timing.category("optimization")
+    @timing.timeit
     def callback_function(self, r):
         """
         Callback function for the optimization (Printing and plotting)
