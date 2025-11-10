@@ -11,9 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 import numpy as np
 from colorama import Fore, Style
-from scipy.sparse import coo_matrix
-from scipy.sparse.linalg import LinearOperator, splu, spilu
-from sklearn.neighbors import NearestNeighbors
 
 from pyLattice.beam import Beam
 from pyLattice.cell import Cell
@@ -30,6 +27,58 @@ if TYPE_CHECKING:
 
 from pyLattice.timing import timing
 
+def _import_scipy_sparse():
+    try:
+        from scipy import sparse as _sparse  # type: ignore
+        from scipy.sparse import linalg as _sla  # type: ignore
+        return _sparse, _sla
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "scipy (sparse, sparse.linalg) is required at runtime. "
+                    "For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+        return _Missing(), _Missing()
+
+def coo_matrix(*args, **kwargs):
+    _sparse, _ = _import_scipy_sparse()
+    return _sparse.coo_matrix(*args, **kwargs)
+
+def LinearOperator(*args, **kwargs):
+    _, _sla = _import_scipy_sparse()
+    return _sla.LinearOperator(*args, **kwargs)
+
+def splu(A, *args, **kwargs):
+    _, _sla = _import_scipy_sparse()
+    return _sla.splu(A, *args, **kwargs)
+
+def spilu(A, *args, **kwargs):
+    _, _sla = _import_scipy_sparse()
+    return _sla.spilu(A, *args, **kwargs)
+
+def _import_sklearn_neighbors():
+    try:
+        from sklearn.neighbors import NearestNeighbors as _NN  # type: ignore
+        return _NN
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __call__(self, *args, **kwargs):
+                raise RuntimeError(
+                    "scikit-learn is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "scikit-learn is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+        return _Missing()
+
+NearestNeighbors = _import_sklearn_neighbors()
 
 class LatticeSim(Lattice):
     def __init__(self, name_file: str, mesh_trimmer: "MeshTrimmer" = None, verbose: int = 0,

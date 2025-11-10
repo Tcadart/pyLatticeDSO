@@ -5,11 +5,25 @@
 # This class handles full-scale lattice simulations using FenicsX.
 # =============================================================================
 import numpy as np
-from dolfinx import fem
 
 from .simulation_base import SimulationBase
 from pyLattice.timing import timing
 
+def _import_dolfinx_fem():
+    try:
+        from dolfinx import fem as _fem  # type: ignore
+        return _fem
+    except Exception as e:
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "dolfinx (and petsc4py) is required at runtime. "
+                    "For documentation builds this import is mocked. "
+                    f"Original import error: {e}"
+                )
+        return _Missing()
+
+fem = _import_dolfinx_fem()
 
 class FullScaleLatticeSimulation(SimulationBase):
     """

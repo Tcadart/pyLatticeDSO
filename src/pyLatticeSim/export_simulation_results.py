@@ -12,13 +12,25 @@ import os
 from pathlib import Path
 
 import numpy as np
-from dolfinx import io, fem
 from basix.ufl import element
 import gmsh
 import ufl
 
 from .utils import clear_directory, directional_modulus
 
+def _import_dolfinx():
+    try:
+        from dolfinx import io as _io, fem as _fem  # type: ignore
+        return _io, _fem
+    except Exception as e:
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "dolfinx (and petsc4py) is required at runtime. "
+                    "For documentation builds this import is mocked. "
+                    f"Original import error: {e}"
+                )
+        return _Missing(), _Missing()
 
 class exportSimulationResults:
     """
@@ -35,6 +47,8 @@ class exportSimulationResults:
     """
 
     def __init__(self, simulation_model, name_export_file: str = "simulation_results"):
+        io, _ = _import_dolfinx()
+
         self.simulation_model = simulation_model
 
         # Project root and export directory
@@ -56,6 +70,7 @@ class exportSimulationResults:
 
     def define_function_space(self):
         """Define the function space for forces and moments."""
+        _, fem = _import_dolfinx()
         if self.M_function is None:
             element_ = element("DG", self.simulation_model.domain.basix_cell(), 0, shape=(3,))
             self.M_function = fem.functionspace(self.simulation_model.domain, element_)
@@ -80,6 +95,7 @@ class exportSimulationResults:
         """
         Export moments based on FE_result (typically self.simulation_model.u)
         """
+        _, fem = _import_dolfinx()
         self.simulation_model.calculate_moments(FE_result)
         self.define_function_space()
 
@@ -92,6 +108,7 @@ class exportSimulationResults:
 
     def export_macro_strain(self, case: int):
         """Export macro strain for a given loading case."""
+        _, fem = _import_dolfinx()
         self.define_function_space()
         Macro = fem.Function(self.M_function)
         Macro_data = fem.Expression(self.simulation_model.findImposedStrain(case),
@@ -102,6 +119,7 @@ class exportSimulationResults:
 
     def export_local_coordinates_system(self):
         """Export local coordinate axes (a1, a2, t) on the domain."""
+        _, fem = _import_dolfinx()
         self.define_function_space()
 
         a1_ = fem.Function(self.M_function)
@@ -127,6 +145,7 @@ class exportSimulationResults:
 
     def export_internal_force(self, u, case: int = 0):
         """Export internal forces."""
+        _, fem = _import_dolfinx()
         self.simulation_model.calculate_forces(u)
         self.define_function_space()
 
@@ -324,6 +343,7 @@ class exportSimulationResults:
         mesh_radius_int: int
             Number of points along the radius of the beam cross-section mesh.
         """
+        io, _ = _import_dolfinx()
         def find_vector_director(dofmap, geometry):
             """Find the director vector of the beam element defined by dofmap."""
             return [geometry.x[dofmap[1]][i] - geometry.x[dofmap[0]][i] for i in range(3)]
@@ -362,6 +382,7 @@ class exportSimulationResults:
         domainElement: dolfinx.mesh.Mesh
             The mesh of the beam element to save.
         """
+        io, fem = _import_dolfinx()
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         vtk = io.VTKFile(domainElement.comm, str(save_path), "w")
@@ -384,6 +405,7 @@ class exportSimulationResults:
         nameMesh: str | Path
             Full path to the input mesh file in MSH format.
         """
+        io, fem = _import_dolfinx()
         nameMesh = Path(nameMesh)
         domain, a, b = io.gmshio.read_from_msh(str(nameMesh), self.simulation_model.domain.comm)
         try_dir = self.out_dir / "Result"
@@ -602,6 +624,7 @@ class exportSimulationResults:
         lattice_data: object
             The lattice data structure containing cells and beams with node info.
         """
+        io, fem = _import_dolfinx()
         alreadyDone = []
         self.define_function_space()
 

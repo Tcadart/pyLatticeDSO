@@ -15,7 +15,6 @@ from datetime import datetime
 
 import joblib
 import numpy as np
-from scipy.optimize import NonlinearConstraint, Bounds, minimize
 from colorama import Fore, Style
 
 from pyLattice.cell import Cell
@@ -30,6 +29,32 @@ if TYPE_CHECKING:
     from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
 
 from pyLattice.timing import timing
+
+def _opt_import(mod: str, name: str, pkg_label: str = "SciPy"):
+    try:
+        module = __import__(mod, fromlist=[name])
+        return getattr(module, name)
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __init__(self): self.__name__ = name
+            def __call__(self, *args, **kwargs):
+                raise RuntimeError(
+                    f"{pkg_label} is required at runtime for '{name}'. "
+                    f"For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+            def __getattr__(self, _):
+                raise RuntimeError(
+                    f"{pkg_label} is required at runtime for '{name}'. "
+                    f"Original import error: {err}"
+                )
+        return _Missing()
+
+NonlinearConstraint = _opt_import("scipy.optimize", "NonlinearConstraint", pkg_label="SciPy")
+Bounds              = _opt_import("scipy.optimize", "Bounds",              pkg_label="SciPy")
+minimize            = _opt_import("scipy.optimize", "minimize",            pkg_label="SciPy")
+
 
 class LatticeOpti(LatticeSim):
     """

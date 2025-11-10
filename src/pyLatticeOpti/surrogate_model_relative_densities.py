@@ -22,18 +22,70 @@ try:
 except Exception:
     KDTree = None  # Allows importing this module during doc builds without SciPy binary compatibility.
 
+if not os.environ.get("DISPLAY") or os.environ.get("READTHEDOCS") or os.environ.get("PYLATTICE_DOCS"):
+    matplotlib.use("Agg")  # safe for CI/doc builds
+else:
+    matplotlib.use("TkAgg")
 
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+def _import_sklearn_pipeline():
+    try:
+        from sklearn.pipeline import Pipeline as _Pipeline  # type: ignore
+        return _Pipeline
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __call__(self, *args, **kwargs):
+                raise RuntimeError(
+                    "scikit-learn is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "scikit-learn is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+        return _Missing()
 
-matplotlib.use('TkAgg')  # Use TkAgg backend for interactive plots
+Pipeline = _import_sklearn_pipeline()
 
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-from scipy.interpolate import griddata
+def _opt_import(mod: str, name: str, pkg_label: str = "scikit-learn"):
+    """
+    Import a symbol lazily. If unavailable, return a stub that raises
+    a clear RuntimeError only when used (runtime), not at import time.
+    """
+    try:
+        module = __import__(mod, fromlist=[name])
+        return getattr(module, name)
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __init__(self):
+                self.__name__ = name
+            def __call__(self, *args, **kwargs):
+                raise RuntimeError(
+                    f"{pkg_label} is required at runtime for '{name}'. "
+                    f"For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+            # Allow attribute access in case the caller tries methods/attrs
+            def __getattr__(self, _):
+                raise RuntimeError(
+                    f"{pkg_label} is required at runtime for '{name}'. "
+                    f"Original import error: {err}"
+                )
+        return _Missing()
+
+# scikit-learn symbols (lazy)
+StandardScaler      = _opt_import("sklearn.preprocessing", "StandardScaler")
+GaussianProcessRegressor = _opt_import("sklearn.gaussian_process", "GaussianProcessRegressor")
+RBF                 = _opt_import("sklearn.gaussian_process.kernels", "RBF")
+ConstantKernel      = _opt_import("sklearn.gaussian_process.kernels", "ConstantKernel")
+WhiteKernel         = _opt_import("sklearn.gaussian_process.kernels", "WhiteKernel")
+train_test_split    = _opt_import("sklearn.model_selection", "train_test_split")
+mean_squared_error  = _opt_import("sklearn.metrics", "mean_squared_error")
+r2_score            = _opt_import("sklearn.metrics", "r2_score")
+mean_absolute_error = _opt_import("sklearn.metrics", "mean_absolute_error")
+griddata = _opt_import("scipy.interpolate", "griddata", pkg_label="SciPy")
 
 
 # =============================================================================

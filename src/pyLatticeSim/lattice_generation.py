@@ -6,9 +6,22 @@
 # =============================================================================
 
 import gmsh
-from dolfinx.io.gmshio import model_to_mesh
 
 from pyLattice.timing import timing
+
+def _import_dolfinx_gmshio():
+    try:
+        from dolfinx.io import gmshio as _gmshio  # type: ignore
+        return _gmshio
+    except Exception as e:
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "dolfinx (and petsc4py) is required at runtime. "
+                    "For documentation builds this import is mocked. "
+                    f"Original import error: {e}"
+                )
+        return _Missing()
 
 class latticeGeneration:
     """
@@ -63,6 +76,7 @@ class latticeGeneration:
         save_mesh: bool
             If True, save the mesh in a .msh file
         """
+        gmshio = _import_dolfinx_gmshio()
         # Find mesh size
         self.find_mesh_size(mesh_element_lenght)
 
@@ -82,7 +96,7 @@ class latticeGeneration:
             gmsh.model.mesh.generate(self.gdim)
             if save_mesh:
                 gmsh.write("Mesh/" + self.lattice.getName() + ".msh")
-            domain, cells, facets = model_to_mesh(model=gmsh.model, comm=self.COMM, rank=modelRank, gdim=3)
+            domain, cells, facets = gmshio.model_to_mesh(model=gmsh.model, comm=self.COMM, rank=modelRank, gdim=3)
             gmsh.finalize()
             return domain, cells, facets, radtagBeam, tagBeam
 

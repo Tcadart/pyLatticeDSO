@@ -11,13 +11,26 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-
-import scipy.linalg as la
 import numpy as np
 
 if TYPE_CHECKING:
     from pyLatticeSim.lattice_sim import LatticeSim
 
+def _import_scipy_linalg():
+    try:
+        import scipy.linalg as _la  # type: ignore
+        return _la
+    except Exception as e:
+        err_msg = f"{e!r}"
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "scipy is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err_msg}"
+                )
+        return _Missing()
+
+la = _import_scipy_linalg()
 
 def reduce_basis_greedy(schur_complement_dict_to_reduce: dict , tol_greedy: float, file_name: str = None,
                         verbose: int = 1):

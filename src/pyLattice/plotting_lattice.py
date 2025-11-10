@@ -453,7 +453,7 @@ class LatticePlotting:
             dx, dy, dz = cell.size
 
             if beam_color_type_lower == "radii" and cmap is not None and norm is not None:
-                rv = float(np.atleast_1d(getattr(cell.beams_cell[0], "radius", 0.0))[0]) if cell.beams_cell else 0.0
+                rv = float(np.atleast_1d(getattr(cell, "radii", 0.0))[0]) if cell.beams_cell else 0.0
                 colorCell = cmap(norm(rv))
             else:
                 if beam_color_type_lower == "material":

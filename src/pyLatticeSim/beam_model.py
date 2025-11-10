@@ -5,18 +5,39 @@
 #  This class defines a beam model for FenicsX analysis based on a lattice (LatticeSim) geometry.
 # =============================================================================
 from typing import TYPE_CHECKING
-from dolfinx import io, fem
+from pathlib import Path
+import sys
 import ufl
 from ufl import as_vector, sqrt, dot, cross
+import numpy as np
 
 from .lattice_generation import *
 from .material_definition import Material
-from src.pyLattice.materials import MatProperties
+
+try:
+    from pyLattice.materials import MatProperties
+except ModuleNotFoundError:
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from pyLattice.materials import MatProperties
 
 if TYPE_CHECKING:
     from src.pyLatticeSim.lattice_sim import LatticeSim
 
 from pyLattice.timing import timing
+
+def _import_dolfinx():
+    try:
+        from dolfinx import io as _io, fem as _fem  # type: ignore
+        return _io, _fem
+    except Exception as e:
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "dolfinx (and petsc4py) is required at runtime. "
+                    "For documentation builds this import is mocked. "
+                    f"Original import error: {e}"
+                )
+        return _Missing(), _Missing()
 
 class BeamModel:
     """
@@ -96,6 +117,7 @@ class BeamModel:
             Name of the GMSH mesh file (should end with .msh).
         """
         self.name_lattice_geometry = name_lattice_geometry
+        io, _ = _import_dolfinx()
         if not self.name_lattice_geometry.endswith(".msh"):
             raise ValueError(f"The file '{self.name_lattice_geometry}' should have a .msh extension (GMSH)")
         self.domain, self.markers, self.facets = io.gmshio.read_from_msh(self.name_lattice_geometry, self.COMM)
@@ -129,6 +151,7 @@ class BeamModel:
         radius_dict : dict, optional
             Dictionary containing radius values keyed by beam tags.
         """
+        _, fem = _import_dolfinx()
         if self.domain is None:
             raise RuntimeError("Mesh must be initialized before defining radius.")
 

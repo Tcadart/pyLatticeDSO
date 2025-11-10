@@ -12,9 +12,25 @@ import ufl
 from ufl import (TestFunction, TrialFunction, split, as_vector, dot, grad, diag, Measure,
                  dx, action)
 from basix.ufl import element, mixed_element
-from dolfinx import fem, common
 
 from pyLattice.timing import timing
+
+def _import_dolfinx_fem_common():
+    try:
+        from dolfinx import fem as _fem, common as _common  # type: ignore
+        return _fem, _common
+    except Exception as e:
+        err_msg = f"{e!r}"
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "dolfinx (and petsc4py) is required at runtime. "
+                    "For documentation builds this import is mocked. "
+                    f"Original import error: {err_msg}"
+                )
+        return _Missing(), _Missing()
+
+fem, common = _import_dolfinx_fem_common()
 
 class SimulationBase:
     """
@@ -502,7 +518,7 @@ class SimulationBase:
     # =============================================================================
     @timing.category("simulation_base")
     @timing.timeit
-    def calculate_reaction_force(self, node_tag: int, solution: fem.Function = None):
+    def calculate_reaction_force(self, node_tag: int, solution = None):
         """
         Calculate reaction force on node_tag on macro coordinates basis
         with strategy 2 : https://bleyerj.github.io/comet-fenicsx/tips/computing_reactions/computing_reactions.html

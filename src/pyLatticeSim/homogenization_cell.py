@@ -6,16 +6,55 @@
 # It calculates the homogenized stiffness matrix of a unit cell under various loading conditions.
 # =============================================================================
 
-import dolfinx_mpc
 import numpy as np
 import ufl
-from dolfinx import fem, mesh, common
-from dolfinx_mpc import MultiPointConstraint
-from petsc4py import PETSc
 from ufl import as_vector, dot
 
 from .simulation_base import SimulationBase
 from pyLattice.timing import timing
+
+def _import_dolfinx_stack():
+    try:
+        from dolfinx import fem as _fem, mesh as _mesh, common as _common  # type: ignore
+        return _fem, _mesh, _common
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "dolfinx is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+        return _Missing(), _Missing(), _Missing()
+
+def _import_dolfinx_mpc():
+    try:
+        import dolfinx_mpc as _mpc  # type: ignore
+        from dolfinx_mpc import MultiPointConstraint as _MPC  # type: ignore
+        return _mpc, _MPC
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "dolfinx_mpc is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+        return _Missing(), _Missing()
+
+def _import_petsc4py():
+    try:
+        from petsc4py import PETSc as _PETSc  # type: ignore
+        return _PETSc
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "petsc4py is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+        return _Missing()
 
 
 class HomogenizedCell(SimulationBase):
@@ -135,6 +174,7 @@ class HomogenizedCell(SimulationBase):
         selectionFunction: logicalFunction
             Logical function to locate entities
         """
+        fem, mesh, _ = _import_dolfinx_stack()
         nodesLocated = mesh.locate_entities(self.domain, self.domain.topology.dim - 1, selection_function)
         nodesLocatedIndices = np.array(nodesLocated, dtype=np.int32)
         nodesLocatedDofs = fem.locate_dofs_topological(self._V.sub(0), self.domain.topology.dim - 1,
@@ -171,7 +211,9 @@ class HomogenizedCell(SimulationBase):
         """
         Applying periodic boundary condition on unit cell
         """
-        self._mpc = MultiPointConstraint(self._V)
+        fem, _, common = _import_dolfinx_stack()
+        _, MPC = _import_dolfinx_mpc()
+        self._mpc = MPC(self._V)
 
         idx_dict = {}
 
@@ -215,10 +257,13 @@ class HomogenizedCell(SimulationBase):
         """
         Initialize solver for multiple RHS solving
         """
+        fem, _, common = _import_dolfinx_stack()
+        mpc, _ = _import_dolfinx_mpc()
+        PETSc = _import_petsc4py()
         if self._solver is None:
             with common.Timer("Init Solver"):
                 # Assemble the matrix once
-                A = dolfinx_mpc.assemble_matrix(fem.form(self._k_form), self._mpc, bcs=self._bcs)
+                A = mpc.assemble_matrix(fem.form(self._k_form), self._mpc, bcs=self._bcs)
                 A.assemble()
 
                 # Create the solver
@@ -234,6 +279,7 @@ class HomogenizedCell(SimulationBase):
         """
         Function to solve multiple linear problem with the same LHS
         """
+        fem, _, _ = _import_dolfinx_stack()
 
         # Ensure solver is initialized
         self.initialize_solver()
@@ -252,7 +298,9 @@ class HomogenizedCell(SimulationBase):
         """
         Calculate the right-hand side vector for the linear problem.
         """
-        b = dolfinx_mpc.assemble_vector(fem.form(self._l_form), self._mpc)
+        fem, _, _ = _import_dolfinx_stack()
+        mpc, _ = _import_dolfinx_mpc()
+        b = mpc.assemble_vector(fem.form(self._l_form), self._mpc)
         return b
 
     @timing.category("homogenization")
@@ -270,8 +318,8 @@ class HomogenizedCell(SimulationBase):
         -------
         MacroStress : matrix[3,3]
             matrix with macroscopic stress
-
         """
+        _, _, common = _import_dolfinx_stack()
         with common.Timer("Reaction force calculation"):
             self.calculate_generalized_stress(case)
 
@@ -319,6 +367,7 @@ class HomogenizedCell(SimulationBase):
         """
         Apply Dirichlet boundary condition for homogenization
         """
+        fem, _, _ = _import_dolfinx_stack()
         selectionFunction = self.get_logical_function("Center")
         nodesLocatedDofs = self.locate_Dofs(selectionFunction)
         # Define zero function of dim vector space to apply boundary condition
@@ -336,6 +385,7 @@ class HomogenizedCell(SimulationBase):
         case: integer
             Strain case
         """
+        fem, _, _ = _import_dolfinx_stack()
         M_function = fem.functionspace(self.domain, self._element_mixed)
         Macro = fem.Function(M_function)
         Moment_data = fem.Expression(self.find_imposed_strain(case), M_function.sub(0).element.interpolation_points())

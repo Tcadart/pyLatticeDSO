@@ -26,7 +26,7 @@ Use the provided GhPython script to create a Grasshopper component that reads th
 > The GhPython script is provided at: `extras/grasshopper/pylattice_gh.py`.
 
 The component has the following structure (see image below):
-![Grasshopper script](/docs/grasshopper_script.png)
+![Grasshopper script](../grasshopper_script.png)
 
 - **Inputs**: a lattice name (pointing to a JSON export) `nameLattice`, a boolean to optionally cut the mesh `cutCell`.
 - **Outputs**:

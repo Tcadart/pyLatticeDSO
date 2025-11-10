@@ -11,15 +11,10 @@
       "z": 1
     },
     "radii": [
-      0.09252005142831997
+      0.1
     ],
     "geom_types": [
       "BCC"
     ]
-  },
-  "simulation_parameters": {
-    "enable" : true,
-    "material": "VeroClear",
-    "periodicity": true
-    }
+  }
 }
