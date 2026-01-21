@@ -577,6 +577,9 @@ class LatticePlotting:
 
         if file_save_path is not None:
             plt.savefig(file_save_path)
+            import os
+            full_path = os.path.abspath(file_save_path)
+            print(Fore.GREEN + f"Lattice plot saved to: {full_path}" + Fore.RESET)
 
         if plotting:
             self._show()
@@ -725,6 +728,7 @@ class LatticePlotting:
         import matplotlib
 
         if not self._is_display_available():
+            print("Display not available; skipping plt.show().")
             # No GUI display available (e.g., server/CI) -> don't attempt to show.
             return
 
