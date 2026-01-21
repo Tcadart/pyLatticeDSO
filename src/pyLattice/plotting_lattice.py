@@ -639,10 +639,10 @@ class LatticePlotting:
         import matplotlib.cm as cm
 
         cells = lattice.cells
-        if len(cells.geom_types) <= 1:
+        if len(cells[0].geom_types) <= 1:
             print("Lattice is not hybrid; only one geometry type found.")
         latticeDimDict = lattice.lattice_dimension_dict
-        rmin = 0
+        rmin = 0.025
         rmax = 0.1
 
         # Determine number of geometries
