@@ -1,17 +1,15 @@
-"""
-point.py
-"""
+# =============================================================================
+# CLASS: Point
+# =============================================================================
 import math
 import random
-from typing import List, Tuple, Optional
-
 from typing import List, Tuple, Optional, TYPE_CHECKING
 
 from .utils import _discard
+from .timing import timing
 
 if TYPE_CHECKING:
     from .cell import Cell
-
 
 class Point:
     """
@@ -23,11 +21,27 @@ class Point:
         """
         Initialize a point object.
 
-        Args:
-            x (float): X-coordinate of the point.
-            y (float): Y-coordinate of the point.
-            z (float): Z-coordinate of the point.
-            node_uncertainty_SD (float, optional): Standard deviation for adding uncertainty to node coordinates.
+        Parameters
+        ----------
+        x : float
+            X-coordinate of the point.
+
+        y : float
+            Y-coordinate of the point.
+
+        z : float
+            Z-coordinate of the point.
+
+        cell_belongings : List[Cell]
+            List of cells that contain this point.
+
+        node_uncertainty_SD : float, optional
+            Standard deviation for node position uncertainty (default is 0.0).
+
+        Raises
+        ------
+        ValueError
+            If coordinates are not numeric or if node_uncertainty_SD is negative.
         """
         # Validate input types and values
         if not isinstance(x, (int, float)) or not isinstance(y, (int, float)) or not isinstance(z, (int, float)):
@@ -42,18 +56,24 @@ class Point:
         self.y: float = float(y) + random.gauss(0, node_uncertainty_SD)
         self.z: float = float(z) + random.gauss(0, node_uncertainty_SD)
         self.cell_belongings: List["Cell"] = cell_belongings  # List of cells containing the point
+        self.connected_beams: set = set()  # List of beams connected to the point.
+
+        # Indexation and tagging
         self.index: Optional[int] = None  # Global index of the point
         self.tag: Optional[int] = None  # Global boundary tag
         self.cell_local_tag: Optional[dict] = {} # Dictionary of local tags for each cell containing the point
         self.index_boundary: Optional[int] = None  # Global index for boundary cell
+
+        # Simulation attributes
         self.displacement_vector: List[float] = [0.0] * 6  # Displacement vector of 6 DOF (Degrees of Freedom).
         self.reaction_force_vector: List[float] = [0.0] * 6  # Reaction force vector of 6 DOF.
         self.applied_force: List[float] = [0.0] * 6  # Applied force vector of 6 DOF.
         self.fixed_DOF: List[bool] = [False] * 6  # Fixed DOF vector (False: free, True: fixed).
         self.global_free_DOF_index: List[Optional[float]] = [None] * 6  # Global free DOF index.
         self.node_mod: bool = False
+
+        # Visualization attributes
         self.magnification_factor: float = 5.0  # Magnification factor for visualization.
-        self.connected_beams: set = set()  # List of beams connected to the point.
 
     def destroy(self) -> None:
         """
@@ -91,6 +111,7 @@ class Point:
         Retrieve the current position of the point.
 
         Returns:
+        -----------
             Tuple[float, float, float]: (x, y, z) coordinates of the point.
         """
         return self.x, self.y, self.z
@@ -101,6 +122,7 @@ class Point:
         Retrieve point data for exporting.
 
         Returns:
+        -----------
             List[float]: [index, x, y, z] of the point.
         """
         return [self.index, self.x, self.y, self.z]
@@ -111,23 +133,39 @@ class Point:
         Retrieve the deformed position of the point.
 
         Returns:
+        -----------
             Tuple[float, float, float]: (x, y, z) coordinates including displacements.
         """
         return (self.x + self.displacement_vector[0] * self.magnification_factor,
                 self.y + self.displacement_vector[1] * self.magnification_factor,
                 self.z + self.displacement_vector[2] * self.magnification_factor)
 
+# =============================================================================
+# SECTION: Design Methods
+# =============================================================================
+
+
+    @timing.category("design")
+    @timing.timeit
     def move_to(self, xNew: float, yNew: float, zNew: float) -> None:
         """
         Move the point to new coordinates.
 
-        Args:
-            xNew (float): New X-coordinate.
-            yNew (float): New Y-coordinate.
-            zNew (float): New Z-coordinate.
+        Parameters
+        ----------
+        xNew : float
+            New x-coordinate.
+
+        yNew : float
+            New y-coordinate.
+
+        zNew : float
+            New z-coordinate.
         """
         self.x, self.y, self.z = xNew, yNew, zNew
 
+    @timing.category("design")
+    @timing.timeit
     def tag_point(self, boundary_box_domain: list[float]) -> int:
         """
         Generate standardized tags for the point based on its position.
@@ -196,67 +234,8 @@ class Point:
             if all(condition):
                 return code
 
-    def initialize_reaction_force(self) -> None:
-        """
-        Reset the reaction force vector to zero.
-        """
-        self.reaction_force_vector = [0.0] * 6
-
-    def initialize_displacement(self) -> None:
-        """
-        Reset displacement values to zero for all DOF.
-        """
-        self.displacement_vector = [0.0] * 6
-
-    def set_applied_force(self, appliedForce: List[float], DOF: list[int]) -> None:
-        """
-        Assign applied force to the point.
-
-        Parameters
-        ----------
-        appliedForce : List[float]
-            Applied force values for each DOF.
-        DOF : list[int]
-            List of DOF to assign (0: x, 1: y, 2: z, 3: Rx, 4: Ry, 5: Rz).
-        """
-        if len(DOF) != len(appliedForce):
-            raise ValueError("Length of DOF and applied_force must be equal.")
-        for i in range(len(DOF)):
-            self.applied_force[DOF[i]] = appliedForce[i]
-
-    def set_reaction_force(self, reactionForce: List[float]) -> None:
-        """
-        Assign reaction force to the point.
-
-        Args:
-            reactionForce (List[float]): Reaction force values for each DOF.
-        """
-        if len(reactionForce) != 6:
-            raise ValueError("Reaction force must have exactly 6 values.")
-        for i in range(len(self.reaction_force_vector)):
-            self.reaction_force_vector[i] += reactionForce[i]
-
-    def fix_DOF(self, DOF: List[int]) -> None:
-        """
-        Fix specific degrees of freedom for the point.
-
-        Args:
-            DOF (List[int]): List of DOF to fix (0: x, 1: y, 2: z, 3: Rx, 4: Ry, 5: Rz).
-        """
-        for i in DOF:
-            self.fixed_DOF[i] = True
-
-    def calculate_point_energy(self) -> float:
-        """
-        Calculate the internal energy of the point.
-
-        Returns:
-            float: Internal energy based on displacement and reaction forces.
-        """
-        rf = self.reaction_force_vector + self.applied_force
-        u = self.displacement_vector
-        return sum(rf[i] * u[i] for i in range(6))
-
+    @timing.category("Design")
+    @timing.timeit
     def is_identical_to(self, other: 'Point', cell_size: list[float]) -> bool:
         """
         Check if this point is identical to another point, modulo the cell size (periodicity).
@@ -265,6 +244,7 @@ class Point:
         ----------
         other : Point
             The other point to compare with.
+
         cell_size : list[float]
             Size of the unit cell in x, y, z directions.
 
@@ -279,6 +259,8 @@ class Point:
             for coord, size in zip(['x', 'y', 'z'], cell_size)
         )
 
+    @timing.category("Design")
+    @timing.timeit
     def is_on_boundary(self, boundary_box_lattice) -> bool:
         """
         Get boolean that give information of boundary node
@@ -287,6 +269,7 @@ class Point:
         -----------
         boundary_box_lattice: list[float]
             Boundary box of the lattice containing [x_min, x_max, y_min, y_max, z_min, z_max].
+
         Returns:
         ----------
         boolean: (True if node on boundary)
@@ -298,18 +281,26 @@ class Point:
                 self.z == boundary_box_lattice[4] or
                 self.z == boundary_box_lattice[5])
 
+    @timing.category("Design")
+    @timing.timeit
     def distance_to(self, other: 'Point') -> float:
         """
         Calculate the distance to another point.
 
-        Args:
-            other (Point): The other point.
+        Parameters:
+        -----------
+        other : Point
+            The other point to calculate the distance to.
 
         Returns:
-            float: The Euclidean distance to the other point.
+        -------
+        float
+            The Euclidean distance between this point and the other point.
         """
         return math.sqrt((self.x - other.x) ** 2 + (self.y - other.y) ** 2 + (self.z - other.z) ** 2)
 
+    @timing.category("Design")
+    @timing.timeit
     def set_local_tag(self, cell_index: int, local_tag: int) -> None:
         """
         Set the local tag for a specific cell containing the point.
@@ -323,7 +314,96 @@ class Point:
         """
         self.cell_local_tag[cell_index] = local_tag
 
+    @timing.category("Design")
+    @timing.timeit
     def add_cell_belonging(self, cell: "Cell") -> None:
-        """Adding a cell to the list of cells this point belongs to."""
+        """
+        Add a cell to the list of cells containing this point.
+
+        Parameters:
+        -----------
+        cell : Cell
+            The cell to add.
+        """
         if cell not in self.cell_belongings:
             self.cell_belongings.append(cell)
+
+# =============================================================================
+# SECTION: Simulation Methods
+# =============================================================================
+
+    def initialize_reaction_force(self) -> None:
+        """
+        Reset the reaction force vector to zero.
+        """
+        self.reaction_force_vector = [0.0] * 6
+
+    def initialize_displacement(self) -> None:
+        """
+        Reset displacement values to zero for all DOF.
+        """
+        self.displacement_vector = [0.0] * 6
+
+    @timing.category("Simulation")
+    @timing.timeit
+    def set_applied_force(self, appliedForce: List[float], DOF: list[int]) -> None:
+        """
+        Assign applied force to the point.
+
+        Parameters
+        ----------
+        appliedForce : List[float]
+            Applied force values for each DOF.
+
+        DOF : list[int]
+            List of DOF to assign (0: x, 1: y, 2: z, 3: Rx, 4: Ry, 5: Rz).
+        """
+        if len(DOF) != len(appliedForce):
+            raise ValueError("Length of DOF and applied_force must be equal.")
+        for i in range(len(DOF)):
+            self.applied_force[DOF[i]] = appliedForce[i]
+
+    @timing.category("Simulation")
+    @timing.timeit
+    def set_reaction_force(self, reactionForce: List[float]) -> None:
+        """
+        Assign reaction force to the point.
+
+        Parameters
+        ----------
+        reactionForce : List[float]
+            Reaction force values for each DOF.
+        """
+        if len(reactionForce) != 6:
+            raise ValueError("Reaction force must have exactly 6 values.")
+        for i in range(len(self.reaction_force_vector)):
+            self.reaction_force_vector[i] += reactionForce[i]
+
+    @timing.category("Simulation")
+    @timing.timeit
+    def fix_DOF(self, DOF: List[int]) -> None:
+        """
+        Fix specific degrees of freedom for the point.
+
+        Parameters
+        ----------
+        DOF : List[int]
+            List of DOF to fix (0: x, 1: y, 2: z, 3: Rx, 4: Ry, 5: Rz).
+        """
+        for i in DOF:
+            self.fixed_DOF[i] = True
+
+    @timing.category("Simulation")
+    @timing.timeit
+    def calculate_point_energy(self) -> float:
+        """
+        Calculate the internal energy of the point.
+
+        Returns:
+        -------
+        float
+            The internal energy of the point.
+        """
+        rf = self.reaction_force_vector + self.applied_force
+        u = self.displacement_vector
+        return sum(rf[i] * u[i] for i in range(6))

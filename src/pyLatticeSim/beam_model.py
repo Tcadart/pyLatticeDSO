@@ -1,18 +1,43 @@
-"""
-Define Lattice Beam model for FenicsX analysis
-"""
-import numpy as np
-
-from dolfinx import io, fem
+# =============================================================================
+# CLASS: BeamModel
+#
+# DESCRIPTION:
+#  This class defines a beam model for FenicsX analysis based on a lattice (LatticeSim) geometry.
+# =============================================================================
+from typing import TYPE_CHECKING
+from pathlib import Path
+import sys
 import ufl
 from ufl import as_vector, sqrt, dot, cross
+import numpy as np
 
 from .lattice_generation import *
 from .material_definition import Material
-from src.pyLattice.materials import MatProperties
 
-from .utils_timing import *
-timing = Timing()
+try:
+    from pyLattice.materials import MatProperties
+except ModuleNotFoundError:
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from pyLattice.materials import MatProperties
+
+if TYPE_CHECKING:
+    from src.pyLatticeSim.lattice_sim import LatticeSim
+
+from pyLattice.timing import timing
+
+def _import_dolfinx():
+    try:
+        from dolfinx import io as _io, fem as _fem  # type: ignore
+        return _io, _fem
+    except Exception as e:
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "dolfinx (and petsc4py) is required at runtime. "
+                    "For documentation builds this import is mocked. "
+                    f"Original import error: {e}"
+                )
+        return _Missing(), _Missing()
 
 class BeamModel:
     """
@@ -22,8 +47,14 @@ class BeamModel:
     ----------
     COMM : MPI communicator
         MPI communicator for parallel computing
+
+    lattice : LatticeObject
+        Lattice object from pyLattice
+
+    cell_index : int, optional
+        Index of the cell to generate the mesh for. If None, the entire lattice mesh is generated.
     """
-    def __init__(self, COMM, lattice=None, cell_index=None):
+    def __init__(self, COMM, lattice: "LatticeSim", cell_index=None):
         self.COMM = COMM
         self.facets = None
         self.markers = None
@@ -49,6 +80,11 @@ class BeamModel:
             raise AttributeError("Material properties have not been initialized.")
         return self._material
 
+    # =============================================================================
+    # SECTION: Model Definition Methods
+    # =============================================================================
+
+    @timing.category("beam_model_definition")
     @timing.timeit
     def define_model(self, lattice, cellIndex: int = None):
         """
@@ -58,16 +94,18 @@ class BeamModel:
         ----------
         lattice : Lattice
             The lattice object containing the mesh generation parameters.
+
         cellIndex : int, optional
             Index of the cell to generate the mesh for. If None, the entire lattice mesh is generated.
         """
         self.lattice = lattice
-        self.generate_mesh(lattice, cellIndex)
-        self.define_material_model(lattice)
+        self.generate_mesh(self.lattice, cellIndex)
+        self.define_material_model(self.lattice)
         self.define_radius()
         self.define_mechanical_properties()
         # self.define_beam_geometry_data_circular_gradient()
 
+    @timing.category("beam_model_definition")
     @timing.timeit
     def open_lattice_geometry(self, name_lattice_geometry: str):
         """
@@ -79,10 +117,12 @@ class BeamModel:
             Name of the GMSH mesh file (should end with .msh).
         """
         self.name_lattice_geometry = name_lattice_geometry
+        io, _ = _import_dolfinx()
         if not self.name_lattice_geometry.endswith(".msh"):
             raise ValueError(f"The file '{self.name_lattice_geometry}' should have a .msh extension (GMSH)")
         self.domain, self.markers, self.facets = io.gmshio.read_from_msh(self.name_lattice_geometry, self.COMM)
 
+    @timing.category("beam_model_definition")
     @timing.timeit
     def generate_mesh(self, lattice, cell_index=None):
         """
@@ -90,8 +130,9 @@ class BeamModel:
 
         Parameters
         ----------
-        lattice : Lattice
+        lattice : LatticeObject
             The lattice object containing the mesh generation parameters.
+
         cell_index : int, optional
             Index of the cell to generate the mesh for. If None, the entire lattice mesh is generated.
         """
@@ -99,7 +140,7 @@ class BeamModel:
         self.domain, self.markers, self.facets, self.rad_tag_beam, self.tag_beam = (
             latticeMesh.mesh_lattice_cells(cell_index, save_mesh=False))
 
-
+    @timing.category("beam_model_definition")
     @timing.timeit
     def define_radius(self, radius_dict: dict = None):
         """
@@ -110,6 +151,7 @@ class BeamModel:
         radius_dict : dict, optional
             Dictionary containing radius values keyed by beam tags.
         """
+        _, fem = _import_dolfinx()
         if self.domain is None:
             raise RuntimeError("Mesh must be initialized before defining radius.")
 
@@ -123,6 +165,7 @@ class BeamModel:
             elem = self.markers.find(tag)
             self.radius.x.array[elem] = np.full_like(elem, rad, dtype=np.float64)
 
+    @timing.category("beam_model_definition")
     @timing.timeit
     def define_mechanical_properties(self):
         """Compute and set mechanical properties for the beam"""
@@ -132,6 +175,7 @@ class BeamModel:
         self.material.compute_mechanical_properties(self.radius)
         self.calculate_local_coordinate_system()
 
+    @timing.category("beam_model_definition")
     @timing.timeit
     def define_beam_geometry_data_circular_gradient(self):
         """Define beam geometry data for circular gradient"""
@@ -140,6 +184,7 @@ class BeamModel:
 
         self.material.compute_gradient(self.radius, self.tag_beam, self.lattice)
 
+    @timing.category("beam_model_definition")
     @timing.timeit
     def define_material_model(self, lattice):
         """Define all material properties with preset data"""
@@ -147,6 +192,7 @@ class BeamModel:
         lattice_material = MatProperties(lattice.material_name)
         self._material.set_material(lattice_material)
 
+    @timing.category("beam_model_definition")
     @timing.timeit
     def calculate_local_coordinate_system(self):
         """Calculate local coordinate system on each beam of the mesh"""

@@ -1,29 +1,84 @@
+# =============================================================================
+# CLASS: LatticeSim
+#
+# DESCRIPTION:
+# This class extends the Lattice class to include simulation capabilities, beam modeling and
+# domain decomposition methods.
+# =============================================================================
+
 from math import sqrt
 from pathlib import Path
 from typing import TYPE_CHECKING
 import numpy as np
 from colorama import Fore, Style
-from scipy.sparse import coo_matrix
-from scipy.sparse.linalg import LinearOperator, splu, spilu
-from sklearn.neighbors import NearestNeighbors
 
 from pyLattice.beam import Beam
 from pyLattice.cell import Cell
 from pyLattice.lattice import Lattice
-from pyLattice.plotting_lattice import LatticePlotting
 from pyLattice.utils import open_lattice_parameters
 from pyLatticeSim.greedy_algorithm import load_reduced_basis
 from pyLatticeSim.utils_rbf import ThinPlateSplineRBF
-from pyLatticeSim.utils_schur import get_schur_complement, load_schur_complement_dataset
+from pyLatticeSim.utils_schur import get_schur_complement
 from pyLatticeSim.conjugate_gradient_solver import conjugate_gradient_solver
 from pyLatticeSim.utils_simulation import solve_FEM_cell
 
 if TYPE_CHECKING:
     from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
 
-from pyLattice.timing import *
-timing = Timing()
+from pyLattice.timing import timing
 
+def _import_scipy_sparse():
+    try:
+        from scipy import sparse as _sparse  # type: ignore
+        from scipy.sparse import linalg as _sla  # type: ignore
+        return _sparse, _sla
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "scipy (sparse, sparse.linalg) is required at runtime. "
+                    "For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+        return _Missing(), _Missing()
+
+def coo_matrix(*args, **kwargs):
+    _sparse, _ = _import_scipy_sparse()
+    return _sparse.coo_matrix(*args, **kwargs)
+
+def LinearOperator(*args, **kwargs):
+    _, _sla = _import_scipy_sparse()
+    return _sla.LinearOperator(*args, **kwargs)
+
+def splu(A, *args, **kwargs):
+    _, _sla = _import_scipy_sparse()
+    return _sla.splu(A, *args, **kwargs)
+
+def spilu(A, *args, **kwargs):
+    _, _sla = _import_scipy_sparse()
+    return _sla.spilu(A, *args, **kwargs)
+
+def _import_sklearn_neighbors():
+    try:
+        from sklearn.neighbors import NearestNeighbors as _NN  # type: ignore
+        return _NN
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __call__(self, *args, **kwargs):
+                raise RuntimeError(
+                    "scikit-learn is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "scikit-learn is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+        return _Missing()
+
+NearestNeighbors = _import_sklearn_neighbors()
 
 class LatticeSim(Lattice):
     def __init__(self, name_file: str, mesh_trimmer: "MeshTrimmer" = None, verbose: int = 0,
@@ -135,19 +190,62 @@ class LatticeSim(Lattice):
             self.iteration = 0
             self.residuals = []
 
-    def _sorted_nodes(self, nodes, ndigits: int = 9):
+    @staticmethod
+    def _sorted_nodes(nodes, ndigits: int = 9):
         """Deterministic ordering for any node iterable (kills randomness from set iteration)."""
         return sorted(
             nodes,
             key=lambda n: (round(n.x, ndigits), round(n.y, ndigits), round(n.z, ndigits), getattr(n, "index", -1)),
         )
 
+    def define_simulation_parameters(self, name_file: str):
+        """
+        Define simulation parameters from the input file.
+
+        Parameters
+        ----------
+        name_file : str
+            Name of the input file
+        """
+        lattice_parameters = open_lattice_parameters(name_file)
+
+        sim_params = lattice_parameters.get("simulation_parameters", {})
+        self.enable_simulation_properties = bool(sim_params.get("enable", False))
+        self.material_name = sim_params.get("material", "VeroClear")
+        self.enable_periodicity = sim_params.get("periodicity", False)
+        DDM_parameters = sim_params.get("DDM", None)
+        if DDM_parameters is not None:
+            self.enable_preconditioner = DDM_parameters.get("enable_preconditioner", False)
+            self.preconditioner_type = DDM_parameters.get("preconditioner_type", None)
+            if self.preconditioner_type is None and self.enable_preconditioner:
+                raise ValueError("Preconditioner type must be defined in the input file.")
+            self.number_iteration_max = DDM_parameters.get("max_iterations", 1000)
+            if self.enable_preconditioner is not None and self.number_iteration_max is not None:
+                self._parameters_define = True
+            schur_complement_computation = DDM_parameters.get("schur_complement_computation", None)
+            if schur_complement_computation is not None:
+                self.type_schur_complement_computation = schur_complement_computation.get("type", None)
+                if not self.type_schur_complement_computation in ["exact", "FE2"]:
+                    self.precision_greedy = schur_complement_computation.get("precision_greedy", None)
+                    if self.precision_greedy is None:
+                        raise ValueError("Precision for greedy algorithm must be defined in the input file.")
+            else:
+                raise ValueError("Schur complement computation method must be defined in the input file.")
+        else:
+            if self.domain_decomposition_solver:
+                raise ValueError("Schur complement computation method must be defined in the input file.")
+
+        self.boundary_conditions = lattice_parameters.get("boundary_conditions", {})
+
+    # =============================================================================
+    # SECTION: Beam penalization Methods
+    # =============================================================================
+    @timing.category("simulation")
     @timing.timeit
     def set_penalized_beams(self) -> None:
         """
-        Modifies beam and node data to model lattice structures for simulation with rigidity penalization at node.
-        If L_zone at one end is 0 (or <= 0), we do not create a penalized segment at that end.
-        If both are 0, the beam is left unchanged.
+        Set penalization on beams at nodes based on L_zone values defined at beam endpoints.
+        This method allows for better simulation of beam junctions by introducing penalized segments.
         """
         for cell in self.cells:
             beams_to_remove = []
@@ -210,6 +308,7 @@ class LatticeSim(Lattice):
         print(Fore.GREEN + "Lattice penalization applied to beams at nodes." + Style.RESET_ALL)
 
 
+    @timing.category("simulation")
     @timing.timeit
     def reset_penalized_beams(self) -> None:
         """
@@ -299,61 +398,9 @@ class LatticeSim(Lattice):
         self.is_penalized = False
         print(Fore.GREEN + "Lattice penalization reverted." + Style.RESET_ALL)
 
-    def define_simulation_parameters(self, name_file: str):
-        """
-        Define simulation parameters from the input file.
-
-        Parameters
-        ----------
-        name_file : str
-            Name of the input file
-        """
-        lattice_parameters = open_lattice_parameters(name_file)
-
-        sim_params = lattice_parameters.get("simulation_parameters", {})
-        self.enable_simulation_properties = bool(sim_params.get("enable", False))
-        self.material_name = sim_params.get("material", "VeroClear")
-        self.enable_periodicity = sim_params.get("periodicity", False)
-        DDM_parameters = sim_params.get("DDM", None)
-        if DDM_parameters is not None:
-            self.enable_preconditioner = DDM_parameters.get("enable_preconditioner", False)
-            self.preconditioner_type = DDM_parameters.get("preconditioner_type", None)
-            if self.preconditioner_type is None and self.enable_preconditioner:
-                raise ValueError("Preconditioner type must be defined in the input file.")
-            self.number_iteration_max = DDM_parameters.get("max_iterations", 1000)
-            if self.enable_preconditioner is not None and self.number_iteration_max is not None:
-                self._parameters_define = True
-            schur_complement_computation = DDM_parameters.get("schur_complement_computation", None)
-            if schur_complement_computation is not None:
-                self.type_schur_complement_computation = schur_complement_computation.get("type", None)
-                if not self.type_schur_complement_computation in ["exact", "FE2"]:
-                    self.precision_greedy = schur_complement_computation.get("precision_greedy", None)
-                    if self.precision_greedy is None:
-                        raise ValueError("Precision for greedy algorithm must be defined in the input file.")
-            else:
-                raise ValueError("Schur complement computation method must be defined in the input file.")
-        else:
-            if self.domain_decomposition_solver:
-                raise ValueError("Schur complement computation method must be defined in the input file.")
-
-        self.boundary_conditions = lattice_parameters.get("boundary_conditions", {})
-
-
-    def apply_displacement_surface(self, surfaceNames: list[str], valueDisplacement: list[float],
-                                          DOF: list[int]) -> None:
-        """
-        Apply boundary conditions to the lattice
-
-        Parameters:
-        -----------
-        surfaceNames: list[str]
-            List of surfaces to apply boundary conditions (e.g., ["Xmin", "Xmax", "Ymin"])
-        valueDisplacement: list of float
-            Displacement value to apply to the boundary conditions
-        DOF: list of int
-            Degree of freedom to fix (0: x, 1: y, 2: z, 3: Rx, 4: Ry, 5: Rz)
-        """
-        self.apply_constraints_nodes(surfaceNames, valueDisplacement, DOF, "Displacement")
+# =============================================================================
+# SECTION: Boundary condition Methods
+# =============================================================================
 
     def apply_constraints_nodes(self, surfaces: list[str], value: list[float], DOF: list[int],
                                 type_constraint: str = "Displacement", surface_cells: list[str] = None) -> None:
@@ -364,12 +411,16 @@ class LatticeSim(Lattice):
         -----------
         surfaces: list[str]
             List of surfaces to apply constraint (e.g., ["Xmin", "Xmax", "Ymin"])
+
         value: list of float
             Values to apply to the constraint
+
         DOF: list of int
             Degree of freedom to apply constraint (0: x, 1: y, 2: z, 3: Rx, 4: Ry, 5: Rz)
+
         type_beam: str
             Type of constraint (Displacement, Force)
+
         surface_cells: list[str], optional
             List of surfaces to find points on cells (e.g., ["Xmin", "Xmax", "Ymin"]). If None, uses surfaceNames.
         """
@@ -405,353 +456,6 @@ class LatticeSim(Lattice):
                             node.applied_force[d] = val / n_tgt
                         else:
                             raise ValueError("Invalid type of constraint. Use 'Displacement' or 'Force'.")
-
-
-    def apply_force_surface(self, surfaceName: list[str], valueForce: list[float], DOF: list[int]) -> None:
-        """
-        Apply force to the lattice
-
-        Parameters:
-        -----------
-        surface: str
-            Surface to apply force (Xmin, Xmax, Ymin, Ymax, Zmin, Zmax)
-        valueForce: list of float
-            Force value to apply to the boundary conditions
-        DOF: list of int
-            List of degree of freedom to fix (0: x, 1: y, 2: z, 3: Rx, 4: Ry, 5: Rz)
-        """
-        self.apply_constraints_nodes(surfaceName, valueForce, DOF, "Force")
-
-    def fix_DOF_on_surface(self, surfaceName: list[str], dofFixed: list[int]) -> None:
-        """
-        Fix degree of freedom on the surface of the lattice
-
-        Parameters:
-        -----------
-        cellList: list of int
-            List of cell index to apply boundary conditions
-        surface: str
-            Surface to apply boundary conditions (Xmin, Xmax, Ymin, Ymax, Zmin, Zmax)
-        dofFixed: list of int
-            List of degree of freedom to fix (0: x, 1: y, 2: z, 3: Rx, 4: Ry, 5: Rz)
-        """
-        self.apply_constraints_nodes(surfaceName, [0.0 for _ in dofFixed], dofFixed, "Displacement")
-
-    def fix_DOF_on_node(self, nodeList: list[int], dofFixed: list[int]) -> None:
-        """
-        Fix degree of freedom on the surface of the lattice
-
-        Parameters:
-        -----------
-        nodeList: list of int
-            List of node index to apply boundary conditions
-        dofFixed: list of int
-            List of degree of freedom to fix (0: x, 1: y, 2: z, 3: Rx, 4: Ry, 5: Rz)
-        """
-        if self.get_number_nodes() < max(nodeList):
-            raise ValueError("Invalid node index, node do not exist.")
-
-        for node in nodeList:
-            if node < 0 or node >= self.get_number_nodes():
-                raise ValueError("Node index out of range.")
-
-        for cell in self.cells:
-            for beam in cell.beams_cell:
-                for node in [beam.point1, beam.point2]:
-                    if node.index in nodeList:
-                        node.fix_DOF(dofFixed)
-
-    def get_global_displacement_DDM(self, OnlyImposed: bool = False) \
-            -> tuple[list[float], list[int]]:
-        """
-        Get global displacement of the lattice
-
-        Parameters:
-        -----------
-        OnlyImposed: bool
-            If True, only return imposed displacement, else return all displacement
-
-        Returns:
-        --------
-        x: list of float
-            List of global displacement
-        idx_list: list of int
-            List of boundary index per DOF (optional info)
-        """
-        x = [0.0] * self.free_DOF
-        idx_list = [None] * self.free_DOF  # boundary index per DOF (optional info)
-
-        processed_nodes = set()
-        for cell in self.cells:
-            for node in cell.points_cell:
-                if node.index_boundary is None or node.index_boundary in processed_nodes:
-                    continue
-                for i in range(6):
-                    gi = node.global_free_DOF_index[i]
-                    if gi is None:
-                        continue
-                    if not OnlyImposed:
-                        x[gi] = node.displacement_vector[i]
-                        idx_list[gi] = node.index_boundary
-                    else:
-                        # If OnlyImposed, keep imposed values where present, else 0
-                        x[gi] = node.displacement_vector[i]
-                        idx_list[gi] = node.index_boundary
-                processed_nodes.add(node.index_boundary)
-
-        self.global_displacement_index = idx_list
-        if self._verbose > 2:
-            print("globalDisplacement (canonically ordered): ", x)
-            print("global_displacement_index (per DOF): ", idx_list)
-        return x, idx_list
-
-    def get_global_displacement(self, withFixed: bool = False, OnlyImposed: bool = False) \
-            -> tuple[list[float], list[int]]:
-        """ Get global displacement of the lattice
-        Parameters:
-            -----------
-            withFixed: bool If True, return displacement of all nodes, else return only free degree of freedom
-        Returns:
-            --------
-            globalDisplacement: dict
-            Dictionary of global displacement with index_boundary as key and displacement vector as value
-            global_displacement_index: list of int List of index_boundary of the lattice
-        """
-        globalDisplacement = []
-        globalDisplacementIndex = []
-        processed_nodes = set()
-        for cell in self.cells:
-            for node in self._sorted_nodes(cell.points_cell):
-                if node.index_boundary is not None and node.index_boundary not in processed_nodes:
-                    for i in range(6):
-                        if node.fixed_DOF[i] == 0 and not OnlyImposed:
-                            globalDisplacement.append(node.displacement_vector[i])
-                            globalDisplacementIndex.append(node.index_boundary)
-                        elif node.fixed_DOF[i] == 0 and node.applied_force[i] == 0:
-                            globalDisplacement.append(0)
-                        elif withFixed or OnlyImposed:
-                            globalDisplacement.append(node.displacement_vector[i])
-                            globalDisplacementIndex.append(node.index_boundary)
-                    processed_nodes.add(node.index_boundary)
-        if not OnlyImposed:
-            self.global_displacement_index = globalDisplacementIndex
-        if self._verbose > 2:
-            print("globalDisplacement: ", globalDisplacement)
-            print("global_displacement_index: ", globalDisplacementIndex)
-        globalDisplacement = np.array(globalDisplacement)
-        return globalDisplacement, globalDisplacementIndex
-
-    @timing.timeit
-    def define_node_index_boundary(self) -> None:
-        """
-        Define boundary tag for all boundary nodes and calculate the total number of boundary nodes
-        """
-        IndexCounter = 0
-        nodeAlreadyIndexed = {}
-        self.max_index_boundary = 0
-        for cell in self.cells:
-            for node in cell.points_cell:
-                localTag = node.tag_point(cell.boundary_box)
-                if localTag:
-                    if node in nodeAlreadyIndexed:
-                        node.index_boundary = nodeAlreadyIndexed[node]
-                    else:
-                        nodeAlreadyIndexed[node] = IndexCounter
-                        node.index_boundary = IndexCounter
-                        IndexCounter += 1
-        self.max_index_boundary = IndexCounter - 1
-
-
-    def get_global_reaction_force(self, appliedForceAdded: bool = False) -> dict:
-        """
-        Get local reaction force of the lattice and sum if identical TagIndex
-
-        Returns:
-        --------
-        globalReactionForce: dict
-            Dictionary of global reaction force with index_boundary as key and reaction force vector as value
-        """
-        globalReactionForce = {i: [0, 0, 0, 0, 0, 0] for i in range(self.max_index_boundary + 1)}
-        for node in self.nodes:
-            globalReactionForce[node.index_boundary] = node.reaction_force_vector
-            if appliedForceAdded and sum(node.applied_force) > 0:
-                for i in range(6):
-                    if node.applied_force[i] != 0:
-                        globalReactionForce[node.index_boundary][i] += node.applied_force[i]
-        return globalReactionForce
-
-
-    # def get_global_reaction_force_without_fixed_DOF(self, globalReactionForce: dict, rightHandSide: bool = False) \
-    #         -> np.ndarray:
-    #     """
-    #     Get global reaction force of free degree of freedom
-    #
-    #     Parameters:
-    #     -----------
-    #     globalReactionForce: dict
-    #         Dictionary of global reaction force with index_boundary as key and reaction force vector as value
-    #
-    #     Returns:
-    #     --------
-    #     globalReactionForceWithoutFixedDOF: np.ndarray
-    #         Array of global reaction force without fixed degree of freedom
-    #     """
-    #     y = np.zeros(self.free_DOF)
-    #     processed_nodes = set()
-    #
-    #     for cell in self.cells:
-    #         for node in cell.points_cell:
-    #             if node.index_boundary is None or node.index_boundary in processed_nodes:
-    #                 continue
-    #
-    #             for i in range(6):
-    #                 gi = node.global_free_DOF_index[i]
-    #                 if gi is None:
-    #                     continue
-    #                 if rightHandSide and node.applied_force[i] != 0:
-    #                     y[gi] = node.applied_force[i]
-    #                 else:
-    #                     y[gi] = globalReactionForce[node.index_boundary][i]
-    #
-    #             processed_nodes.add(node.index_boundary)
-    #
-    #     return y
-
-    def get_global_reaction_force_without_fixed_DOF(self, globalReactionForce: dict,
-                                                    rightHandSide: bool = False) -> np.ndarray:
-        """
-        Get vector on free DOFs:
-          - if rightHandSide=False -> return reactions on free DOFs
-          - if rightHandSide=True  -> return *only external applied forces* on free DOFs
-                                      (no fallback to reactions when no force is present)
-        """
-        y = np.zeros(self.free_DOF, dtype=float)
-        processed_nodes = set()
-
-        for cell in self.cells:
-            for node in cell.points_cell:
-                if node.index_boundary is None or node.index_boundary in processed_nodes:
-                    continue
-
-                for i in range(6):
-                    gi = node.global_free_DOF_index[i]
-                    if gi is None:
-                        continue
-
-                    if rightHandSide:
-                        # Strictly take the applied forces; zeros where none.
-                        y[gi] = float(node.applied_force[i])
-                    else:
-                        # Reactions (e.g., due to imposed displacements)
-                        y[gi] = float(globalReactionForce[node.index_boundary][i])
-
-                processed_nodes.add(node.index_boundary)
-
-        return y
-
-    def define_free_DOF(self):
-        """
-        Get total number of degrees of freedom in the lattice
-        """
-        self.free_DOF = 0
-        processed_nodes = set()
-        for cell in self.cells:
-            for node in cell.points_cell:
-                if node.index_boundary is not None and node.index_boundary not in processed_nodes:
-                    self.free_DOF += node.fixed_DOF.count(0)
-                    processed_nodes.add(node.index_boundary)
-
-    def set_global_free_DOF_index(self) -> None:
-        """
-        Set global free degree of freedom index for all nodes in boundary
-        """
-        counter = 0
-        processed_nodes = {}
-        for cell in self.cells:
-            for node in cell.points_cell:
-                if node.index_boundary is not None:
-                    if node.index_boundary not in processed_nodes.keys():
-                        for i in np.where(np.array(node.fixed_DOF) == 0)[0]:
-                            node.global_free_DOF_index[i] = counter
-                            counter += 1
-                        processed_nodes[node.index_boundary] = node.global_free_DOF_index
-                    else:
-                        node.global_free_DOF_index[:] = processed_nodes[node.index_boundary]
-
-    def _initialize_reaction_force(self) -> None:
-        """
-        Initialize reaction force of all nodes to 0 on each DOF
-        """
-        for cell in self.cells:
-            for node in cell.points_cell:
-                node.initialize_reaction_force()
-
-    def _initialize_displacement(self) -> None:
-        """
-        Initialize displacement of all nodes to zero on each DOF
-        """
-        for cell in self.cells:
-            for node in cell.points_cell:
-                node.initialize_displacement()
-
-    def _initialize_simulation_parameters(self):
-        """
-        Initialize simulation parameters for each node in the lattice
-        """
-        for node in self.nodes:
-            node.initialize_reaction_force()
-            node.initialize_displacement()
-        self.set_boundary_conditions()
-
-    def build_coupling_operator_cells(self) -> None:
-        """
-        Build coupling operator for each cell in the lattice
-        """
-        for cell in self.cells:
-            cell.build_coupling_operator(self.free_DOF)
-
-    def apply_reaction_force_on_node_list(self, reactionForce: list, nodeCoordinatesList: list):
-        """
-        Apply reaction force on node list
-
-        Parameters:
-        -----------
-        reactionForce: list of float
-            Reaction force to apply
-        nodeCoordinatesList: list of float
-            Coordinates of the node
-        """
-        nodeCoordinatesArray = np.array(nodeCoordinatesList)
-
-        for cell in self.cells:
-            for node in cell.points_cell:
-                nodeCoord = np.array([node.x, node.y, node.z])
-                match = np.all(nodeCoordinatesArray == nodeCoord, axis=1)
-                if np.any(match):
-                    index = np.where(match)[0][0]
-                    node.set_reaction_force(reactionForce[index])
-
-    def apply_displacement_on_node_list(self, displacement: list, nodeCoordinatesList: list):
-        """
-        Apply displacement on node list
-
-        Parameters:
-        -----------
-        displacement: list of float
-            Displacement to apply
-        nodeCoordinatesList: list of float
-            Coordinates of the node
-        """
-        nodeCoordinatesArray = np.array(nodeCoordinatesList)
-
-        for cell in self.cells:
-            for node in cell.points_cell:
-                nodeCoord = np.array([node.x, node.y, node.z])
-                match = np.all(nodeCoordinatesArray == nodeCoord, axis=1)
-                if np.any(match):
-                    index = np.where(match)[0][0]
-                    node.displacement_vector = displacement[index]
-                    node.fix_DOF([i for i in range(6)])
 
     def set_boundary_conditions(self) -> None:
         """
@@ -789,54 +493,355 @@ class LatticeSim(Lattice):
                 surface_cells = data.get("SurfaceCells", None)
                 self.apply_constraints_nodes(data["Surface"], data["Value"], numeric_DOFs, key, surface_cells)
 
-    # def calculate_schur_complement_cells(self):
-    #     """
-    #     Calculate the Schur complement for each cell in the lattice.
-    #     Save the result in the cell.schur_complement attribute.
-    #     """
-    #     schur_cache: dict = {}
-    #     nb_computed = 0
-    #     for cell in self.cells:
-    #         geom_key = tuple(cell.geom_types) if isinstance(cell.geom_types, list) else cell.geom_types
-    #         radius_key = tuple(round(float(r), 8) for r in cell.radii)
-    #
-    #         if geom_key not in schur_cache:
-    #             schur_cache[geom_key] = {}
-    #
-    #
-    #         if radius_key not in schur_cache[geom_key]:
-    #             nb_computed += 1
-    #             # Base Schur complement
-    #             if self.type_schur_complement_computation in ["exact", "FE2"]:
-    #                 S = get_schur_complement(self, cell.index)
-    #             elif self.type_schur_complement_computation in self.surrogate_model_implemented:
-    #                 S = self.get_schur_complement_from_reduced_basis(list(radius_key))
-    #             else:
-    #                 raise NotImplementedError("Not implemented schur complement computation method.")
-    #
-    #             dS_list = None
-    #             if self.enable_gradient_computing:
-    #                 if self.type_schur_complement_computation != "RBF":
-    #                     # Derivatives w.r.t. radii (finite-difference, central)
-    #                     dS_list = self._compute_schur_gradients(cell, list(radius_key))
-    #                 elif self.type_schur_complement_computation == "RBF":
-    #                     # Derivatives w.r.t. radii (via RBF gradients)
-    #                     dS_list = self._compute_schur_gradients_RBF(list(radius_key))
-    #                 else:
-    #                     raise NotImplementedError("Not implemented schur complement gradient computation method.")
-    #
-    #             # print(Fore.RED + "WARNING: Schur is not optimaly computed and stored, "  + Fore.RESET)
-    #             schur_cache[geom_key][radius_key] = {"S": S, "dS": dS_list}
-    #             if self._verbose > 1:
-    #                 print(f"Schur complement + grads computed for geom {geom_key} with radii {radius_key}.")
-    #         else:
-    #             S = schur_cache[geom_key][radius_key]["S"]
-    #             dS_list = schur_cache[geom_key][radius_key]["dS"]
-    #
-    #         cell.schur_complement = S
-    #         cell.schur_complement_gradient = dS_list
-    #     if self._verbose > 0:
-    #         print("Number of unique Schur complements computed:", nb_computed)
+    # =============================================================================
+    # SECTION: Simulation core Methods
+    # =============================================================================
+
+    @timing.category("simulation")
+    @timing.timeit
+    def get_global_displacement(self, withFixed: bool = False, OnlyImposed: bool = False) \
+            -> tuple[list[float], list[int]]:
+        """
+        Get global displacement of the lattice
+        Parameters:
+        -----------
+        withFixed: bool
+            If True, return displacement including fixed DOF
+        OnlyImposed: bool
+            If True, only return imposed displacement, else return all displacement
+
+        Returns:
+        --------
+        globalDisplacement: dict
+            Dictionary of global displacement with index_boundary as key and displacement vector as value
+        globalDisplacementIndex: list
+            List of boundary index per DOF (optional info)
+        """
+        globalDisplacement = []
+        globalDisplacementIndex = []
+        processed_nodes = set()
+        for cell in self.cells:
+            for node in self._sorted_nodes(cell.points_cell):
+                if node.index_boundary is not None and node.index_boundary not in processed_nodes:
+                    for i in range(6):
+                        if node.fixed_DOF[i] == 0 and not OnlyImposed:
+                            globalDisplacement.append(node.displacement_vector[i])
+                            globalDisplacementIndex.append(node.index_boundary)
+                        elif node.fixed_DOF[i] == 0 and node.applied_force[i] == 0:
+                            globalDisplacement.append(0)
+                        elif withFixed or OnlyImposed:
+                            globalDisplacement.append(node.displacement_vector[i])
+                            globalDisplacementIndex.append(node.index_boundary)
+                    processed_nodes.add(node.index_boundary)
+        if not OnlyImposed:
+            self.global_displacement_index = globalDisplacementIndex
+        if self._verbose > 2:
+            print("globalDisplacement: ", globalDisplacement)
+            print("global_displacement_index: ", globalDisplacementIndex)
+        globalDisplacement = np.array(globalDisplacement)
+        return globalDisplacement, globalDisplacementIndex
+
+    @timing.category("simulation")
+    @timing.timeit
+    def define_node_index_boundary(self) -> None:
+        """
+        Define boundary tag for all boundary nodes and calculate the total number of boundary nodes
+        """
+        IndexCounter = 0
+        nodeAlreadyIndexed = {}
+        self.max_index_boundary = 0
+        for cell in self.cells:
+            for node in cell.points_cell:
+                localTag = node.tag_point(cell.boundary_box)
+                if localTag:
+                    if node in nodeAlreadyIndexed:
+                        node.index_boundary = nodeAlreadyIndexed[node]
+                    else:
+                        nodeAlreadyIndexed[node] = IndexCounter
+                        node.index_boundary = IndexCounter
+                        IndexCounter += 1
+        self.max_index_boundary = IndexCounter - 1
+
+    @timing.category("simulation")
+    @timing.timeit
+    def get_global_reaction_force(self, appliedForceAdded: bool = False) -> dict:
+        """
+        Get local reaction force of the lattice and sum if identical TagIndex
+
+        Parameters:
+        -----------
+        appliedForceAdded: bool
+            If True, add applied force to reaction force
+
+        Returns:
+        --------
+        globalReactionForce: dict
+            Dictionary of global reaction force with index_boundary as key and reaction force vector as value
+        """
+        globalReactionForce = {i: [0, 0, 0, 0, 0, 0] for i in range(self.max_index_boundary + 1)}
+        for node in self.nodes:
+            globalReactionForce[node.index_boundary] = node.reaction_force_vector
+            if appliedForceAdded and sum(node.applied_force) > 0:
+                for i in range(6):
+                    if node.applied_force[i] != 0:
+                        globalReactionForce[node.index_boundary][i] += node.applied_force[i]
+        return globalReactionForce
+
+    @timing.category("simulation")
+    @timing.timeit
+    def get_global_reaction_force_without_fixed_DOF(self, globalReactionForce: dict,
+                                                    rightHandSide: bool = False) -> np.ndarray:
+        """
+        Get global reaction force of the lattice without fixed DOF
+
+        Parameters:
+        -----------
+        globalReactionForce: dict
+            Dictionary of global reaction force with index_boundary as key and reaction force vector as value
+
+        rightHandSide: bool
+            If True, get applied forces (right-hand side), else get reaction forces
+
+        Returns:
+        --------
+        y: np.ndarray
+            Array of global reaction force without fixed DOF
+        """
+        y = np.zeros(self.free_DOF, dtype=float)
+        processed_nodes = set()
+
+        for cell in self.cells:
+            for node in cell.points_cell:
+                if node.index_boundary is None or node.index_boundary in processed_nodes:
+                    continue
+
+                for i in range(6):
+                    gi = node.global_free_DOF_index[i]
+                    if gi is None:
+                        continue
+
+                    if rightHandSide:
+                        # Strictly take the applied forces; zeros where none.
+                        y[gi] = float(node.applied_force[i])
+                    else:
+                        # Reactions (e.g., due to imposed displacements)
+                        y[gi] = float(globalReactionForce[node.index_boundary][i])
+
+                processed_nodes.add(node.index_boundary)
+
+        return y
+
+    # =============================================================================
+    # SECTION: Simulation initialization Methods
+    # =============================================================================
+
+    @timing.category("simulation")
+    @timing.timeit
+    def define_free_DOF(self):
+        """
+        Get total number of degrees of freedom in the lattice
+        """
+        self.free_DOF = 0
+        processed_nodes = set()
+        for cell in self.cells:
+            for node in cell.points_cell:
+                if node.index_boundary is not None and node.index_boundary not in processed_nodes:
+                    self.free_DOF += node.fixed_DOF.count(0)
+                    processed_nodes.add(node.index_boundary)
+
+    @timing.category("simulation")
+    @timing.timeit
+    def set_global_free_DOF_index(self) -> None:
+        """
+        Set global free degree of freedom index for all nodes in boundary
+        """
+        counter = 0
+        processed_nodes = {}
+        for cell in self.cells:
+            for node in cell.points_cell:
+                if node.index_boundary is not None:
+                    if node.index_boundary not in processed_nodes.keys():
+                        for i in np.where(np.array(node.fixed_DOF) == 0)[0]:
+                            node.global_free_DOF_index[i] = counter
+                            counter += 1
+                        processed_nodes[node.index_boundary] = node.global_free_DOF_index
+                    else:
+                        node.global_free_DOF_index[:] = processed_nodes[node.index_boundary]
+
+    @timing.category("simulation")
+    @timing.timeit
+    def _initialize_reaction_force(self) -> None:
+        """
+        Initialize reaction force of all nodes to 0 on each DOF
+        """
+        for cell in self.cells:
+            for node in cell.points_cell:
+                node.initialize_reaction_force()
+
+    @timing.category("simulation")
+    @timing.timeit
+    def _initialize_displacement(self) -> None:
+        """
+        Initialize displacement of all nodes to zero on each DOF
+        """
+        for cell in self.cells:
+            for node in cell.points_cell:
+                node.initialize_displacement()
+
+    @timing.category("simulation")
+    @timing.timeit
+    def _initialize_simulation_parameters(self):
+        """
+        Initialize simulation parameters for each node in the lattice
+        """
+        for node in self.nodes:
+            node.initialize_reaction_force()
+            node.initialize_displacement()
+        self.set_boundary_conditions()
+
+    # =============================================================================
+    # SECTION: DDM core Methods
+    # =============================================================================
+
+    @timing.category("simulation")
+    @timing.timeit
+    def get_global_displacement_DDM(self, OnlyImposed: bool = False) \
+            -> tuple[list[float], list[int]]:
+        """
+        Get global displacement of the lattice
+
+        Parameters:
+        -----------
+        OnlyImposed: bool
+            If True, only return imposed displacement, else return all displacement
+
+        Returns:
+        --------
+        x: list of float
+            List of global displacement
+
+        idx_list: list of int
+            List of boundary index per DOF (optional info)
+        """
+        x = [0.0] * self.free_DOF
+        idx_list = [None] * self.free_DOF  # boundary index per DOF (optional info)
+
+        processed_nodes = set()
+        for cell in self.cells:
+            for node in cell.points_cell:
+                if node.index_boundary is None or node.index_boundary in processed_nodes:
+                    continue
+                for i in range(6):
+                    gi = node.global_free_DOF_index[i]
+                    if gi is None:
+                        continue
+                    if not OnlyImposed:
+                        x[gi] = node.displacement_vector[i]
+                        idx_list[gi] = node.index_boundary
+                    else:
+                        # If OnlyImposed, keep imposed values where present, else 0
+                        x[gi] = node.displacement_vector[i]
+                        idx_list[gi] = node.index_boundary
+                processed_nodes.add(node.index_boundary)
+
+        self.global_displacement_index = idx_list
+        if self._verbose > 2:
+            print("globalDisplacement (canonically ordered): ", x)
+            print("global_displacement_index (per DOF): ", idx_list)
+        return x, idx_list
+
+    @timing.category("simulation")
+    @timing.timeit
+    def evaluate_alphas_linear_surrogate(self, geometric_params: list[float]) -> np.ndarray:
+        """
+        Robust linear surrogate with safe extrapolation:
+          • 1D: np.interp (fast, stable).
+          • ND: LinearNDInterpolator inside convex hull; fallback to NearestNDInterpolator outside.
+        """
+        from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
+
+        mu = np.array(geometric_params, dtype=float).ravel()
+        evalParams = np.asarray(self.reduce_basis_dict["list_elements"], dtype=float)
+        alphaCoeffs = np.asarray(self.alpha_coefficients_greedy, dtype=float)
+
+        # --- Ensure (N_points, n_alpha) orientation for values ---
+        if alphaCoeffs.ndim == 1:
+            alphaCoeffs = alphaCoeffs.reshape(-1, 1)
+        if alphaCoeffs.shape[0] != evalParams.shape[0]:
+            if alphaCoeffs.shape[1] == evalParams.shape[0]:
+                alphaCoeffs = alphaCoeffs.T
+            else:
+                raise ValueError(
+                    f"Incompatible shapes: points={evalParams.shape}, values={alphaCoeffs.shape}. "
+                    "alphaCoeffs must be (N_points, n_alpha)."
+                )
+
+        N = evalParams.shape[0]
+
+        # ---- 1D fast path ----
+        if evalParams.ndim == 1 or (evalParams.ndim == 2 and evalParams.shape[1] == 1):
+            x = float(mu[0])
+            x_grid = evalParams.ravel()
+            idx_sorted = np.argsort(x_grid)
+            x_sorted = x_grid[idx_sorted]
+            A_sorted = alphaCoeffs[idx_sorted]  # (N, k)
+            # np.interp works per scalar -> interpolate each column
+            y = np.vstack([np.interp(x, x_sorted, A_sorted[:, j],
+                                     left=A_sorted[0, j], right=A_sorted[-1, j])
+                           for j in range(A_sorted.shape[1])]).T
+            return y.squeeze()
+
+        # ---- ND general case ----
+        # Cache interpolators to avoid rebuilding every call
+        if not hasattr(self, "_alpha_lin_nd") or not hasattr(self, "_alpha_nn_nd"):
+            print(evalParams.shape, alphaCoeffs.shape)
+            self._alpha_lin_nd = LinearNDInterpolator(evalParams, alphaCoeffs)  # NaN outside hull
+            self._alpha_nn_nd = NearestNDInterpolator(evalParams, alphaCoeffs)  # nearest neighbor fallback
+
+        y = self._alpha_lin_nd(mu)
+        if y is None or np.any(np.isnan(y)):
+            # Outside convex hull -> robust fallback
+            y = self._alpha_nn_nd(mu)
+            if getattr(self, "_verbose", 0) > 0:
+                print(f"⚠️ Extrapolation (nearest-neighbor) used for mu={mu}.")
+        return np.asarray(y).squeeze()
+
+    def _define_radial_basis_functions(self):
+        mu_train = np.array(self.reduce_basis_dict["list_elements"])  # shape (N, d)
+        alpha_train = np.array(self.alpha_coefficients_greedy)  # shape (N, m)
+        self.radial_basis_function = ThinPlateSplineRBF(mu_train, alpha_train)
+
+    def _check_parameters_defined(self):
+        if not self._parameters_define:
+            print(Fore.YELLOW + "You can define parameters with define_parameters method."+ Style.RESET_ALL)
+            print(Fore.YELLOW + "Default parameters are used. (Preconditioner activated and 1000 max iterations"+
+                  Style.RESET_ALL)
+            self.define_parameters()
+
+    def define_parameters(self, enable_precondioner: bool = True, numberIterationMax: int = 1000):
+        """
+        Define parameters for the domain decomposition solver.
+
+        Parameters:
+        enable_preconditioner: bool
+            Enable the preconditioner for the conjugate gradient solver.
+        number_iteration_max: int
+            Maximum number of iterations for the conjugate gradient solver.
+        """
+        self.enable_preconditioner = enable_precondioner
+        self.number_iteration_max = numberIterationMax
+        self._parameters_define = True
+
+    # =============================================================================
+    # SUBSECTION: Schur Complement Methods
+    # =============================================================================
+
+    def build_coupling_operator_cells(self) -> None:
+        """
+        Build coupling operator for each cell in the lattice
+        """
+        for cell in self.cells:
+            cell.build_coupling_operator(self.free_DOF)
 
     def calculate_schur_complement_cells(self):
         """
@@ -1076,8 +1081,6 @@ class LatticeSim(Lattice):
 
         return grads_rbf
 
-
-
     def _schur_for_params(self, cell: "Cell", radii_params: list[float]) -> np.ndarray:
         """
         Helper: evaluate the Schur complement for a given set of radii parameters
@@ -1099,87 +1102,12 @@ class LatticeSim(Lattice):
         else:
             raise NotImplementedError("Not implemented schur complement computation method.")
 
-    def evaluate_alphas_linear_surrogate(self, geometric_params: list[float]) -> np.ndarray:
-        """
-        Robust linear surrogate with safe extrapolation:
-          • 1D: np.interp (fast, stable).
-          • ND: LinearNDInterpolator inside convex hull; fallback to NearestNDInterpolator outside.
-        """
-        from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
+    # =============================================================================
+    # SUBSECTION: DDM Core Methods
+    # =============================================================================
 
-        mu = np.array(geometric_params, dtype=float).ravel()
-        evalParams = np.asarray(self.reduce_basis_dict["list_elements"], dtype=float)
-        alphaCoeffs = np.asarray(self.alpha_coefficients_greedy, dtype=float)
-
-        # --- Ensure (N_points, n_alpha) orientation for values ---
-        if alphaCoeffs.ndim == 1:
-            alphaCoeffs = alphaCoeffs.reshape(-1, 1)
-        if alphaCoeffs.shape[0] != evalParams.shape[0]:
-            if alphaCoeffs.shape[1] == evalParams.shape[0]:
-                alphaCoeffs = alphaCoeffs.T
-            else:
-                raise ValueError(
-                    f"Incompatible shapes: points={evalParams.shape}, values={alphaCoeffs.shape}. "
-                    "alphaCoeffs must be (N_points, n_alpha)."
-                )
-
-        N = evalParams.shape[0]
-
-        # ---- 1D fast path ----
-        if evalParams.ndim == 1 or (evalParams.ndim == 2 and evalParams.shape[1] == 1):
-            x = float(mu[0])
-            x_grid = evalParams.ravel()
-            idx_sorted = np.argsort(x_grid)
-            x_sorted = x_grid[idx_sorted]
-            A_sorted = alphaCoeffs[idx_sorted]  # (N, k)
-            # np.interp works per scalar -> interpolate each column
-            y = np.vstack([np.interp(x, x_sorted, A_sorted[:, j],
-                                     left=A_sorted[0, j], right=A_sorted[-1, j])
-                           for j in range(A_sorted.shape[1])]).T
-            return y.squeeze()
-
-        # ---- ND general case ----
-        # Cache interpolators to avoid rebuilding every call
-        if not hasattr(self, "_alpha_lin_nd") or not hasattr(self, "_alpha_nn_nd"):
-            print(evalParams.shape, alphaCoeffs.shape)
-            self._alpha_lin_nd = LinearNDInterpolator(evalParams, alphaCoeffs)  # NaN outside hull
-            self._alpha_nn_nd = NearestNDInterpolator(evalParams, alphaCoeffs)  # nearest neighbor fallback
-
-        y = self._alpha_lin_nd(mu)
-        if y is None or np.any(np.isnan(y)):
-            # Outside convex hull -> robust fallback
-            y = self._alpha_nn_nd(mu)
-            if getattr(self, "_verbose", 0) > 0:
-                print(f"⚠️ Extrapolation (nearest-neighbor) used for mu={mu}.")
-        return np.asarray(y).squeeze()
-
-    def _define_radial_basis_functions(self):
-        mu_train = np.array(self.reduce_basis_dict["list_elements"])  # shape (N, d)
-        alpha_train = np.array(self.alpha_coefficients_greedy)  # shape (N, m)
-        self.radial_basis_function = ThinPlateSplineRBF(mu_train, alpha_train)
-
-
-    def define_parameters(self, enable_precondioner: bool = True, numberIterationMax: int = 1000):
-        """
-        Define parameters for the domain decomposition solver.
-
-        Parameters:
-        enable_preconditioner: bool
-            Enable the preconditioner for the conjugate gradient solver.
-        number_iteration_max: int
-            Maximum number of iterations for the conjugate gradient solver.
-        """
-        self.enable_preconditioner = enable_precondioner
-        self.number_iteration_max = numberIterationMax
-        self._parameters_define = True
-
-    def _check_parameters_defined(self):
-        if not self._parameters_define:
-            print(Fore.YELLOW + "You can define parameters with define_parameters method."+ Style.RESET_ALL)
-            print(Fore.YELLOW + "Default parameters are used. (Preconditioner activated and 1000 max iterations"+
-                  Style.RESET_ALL)
-            self.define_parameters()
-
+    @timing.category("simulation")
+    @timing.timeit
     def solve_DDM(self):
         """
         Solve the problem with the domain decomposition method.
@@ -1247,11 +1175,18 @@ class LatticeSim(Lattice):
         xsol, globalDisplacementIndex = self.get_global_displacement()
         return xsol, info, self.global_displacement_index, b
 
+    @timing.category("simulation")
+    @timing.timeit
     def calculate_reaction_force_global(self, globalDisplacement, rightHandSide:bool = False):
         """
-        Calculate RF global
+        Calculate the global reaction force of the lattice
 
         Parameters:
+        -----------
+        globalDisplacement: np.ndarray
+            The global displacement vector.
+        rightHandSide: bool
+            If True, get applied forces (right-hand side), else get reaction forces.
         """
         # Calculate RF local
         self.update_reaction_force_each_cell(globalDisplacement)
@@ -1264,7 +1199,8 @@ class LatticeSim(Lattice):
 
         return globalReactionForceWithoutFixedDOF
 
-
+    @timing.category("simulation")
+    @timing.timeit
     def update_reaction_force_each_cell(self, global_displacement):
         """
         Update RF local
@@ -1274,7 +1210,6 @@ class LatticeSim(Lattice):
         global_displacement: np.ndarray
             The global displacement vector.
         """
-        # print("Update RF local with FenicsX")
         self._initialize_reaction_force()
         datasetDataCell = []
         for cell in self.cells:
@@ -1287,6 +1222,8 @@ class LatticeSim(Lattice):
             cell.set_reaction_force_on_nodes(reaction_force_cell)
         return datasetDataCell
 
+    @timing.category("simulation")
+    @timing.timeit
     def solve_sub_problem(self, cell):
         """
         Solve the subproblem on a cell to get the reaction force
@@ -1314,6 +1251,8 @@ class LatticeSim(Lattice):
             reaction_force_cell = simulation_model.calculate_reaction_force_and_moment_all_boundary_nodes(cell)[0]
         return reaction_force_cell
 
+    @timing.category("simulation")
+    @timing.timeit
     def cg_progress(self, xk, b, A_operator):
         """
         Callback function to track and plot progress of the CG method.
@@ -1322,14 +1261,12 @@ class LatticeSim(Lattice):
         -----------
         xk: np.array
             The current solution vector at the k-th iteration.
+
         b: np.array
             The right-hand side vector of the system.
+
         A_operator: callable or matrix
             The operator or matrix for the system Ax = b.
-        iteration: list
-            A list to keep track of the iteration number.
-        residuals: list
-            A list to store the residual norms for plotting.
         """
         if np.isnan(xk).any():
             raise ValueError(Fore.RED + "NaN detected in the Conjugate Gradient solution. Process aborted."+ Style.RESET_ALL)
@@ -1366,6 +1303,12 @@ class LatticeSim(Lattice):
                 self.residuals.append(residual_norm)
                 print(f"Residual norm: {residual_norm:.6e}")
 
+    # =============================================================================
+    # SUBSECTION: Preconditioner Methods
+    # =============================================================================
+
+    @timing.category("preconditioner")
+    @timing.timeit
     def _define_preconditioner_approximation(self):
         path_dataset_schur = Path(__file__).parents[2] / "data" / "outputs" / "schur_complement"
         geom_type_str = "_" + "_".join(str(gt) for gt in self.geom_types)
@@ -1385,11 +1328,11 @@ class LatticeSim(Lattice):
         path_file = path_dataset_schur / name_file
         self.used_schur_preconditioner = np.load(path_file, allow_pickle=True)
 
+    @timing.category("preconditioner")
+    @timing.timeit
     def define_preconditioner(self):
         """
         Define the preconditioner for the conjugate gradient solver.
-        Returns:
-
         """
         if self.enable_preconditioner:
             if self._verbose > 0:
@@ -1403,6 +1346,8 @@ class LatticeSim(Lattice):
                 self.preconditioner = LinearOperator(shape = (self.free_DOF, self.free_DOF),
                                                 matvec=lambda x: inverseSchurComplement @ x)
 
+    @timing.category("preconditioner")
+    @timing.timeit
     def build_preconditioner(self):
         """
         Build a sparse LU/ILU preconditioner of the global Schur complement.
@@ -1469,15 +1414,20 @@ class LatticeSim(Lattice):
 
         return LUSchurComplement, inverseSchurComplement
 
+    # =============================================================================
+    # SECTION: Utils Methods
+    # =============================================================================
+
     def reset_cell_with_new_radii(self, new_radii: list[float], index_cell: int = 0) -> None:
         """
-        Reset a cell with new radii for each beam type
+        Reset cell with new radii for each beam type
         WARNING: BUG for multiple geometry cells
 
         Parameters:
         ------------
         new_radii: list of float
             List of new radii for each beam type
+
         index_cell: int
             Index of the cell to reset
         """
@@ -1570,6 +1520,7 @@ class LatticeSim(Lattice):
         -------
         disp : np.ndarray
             Imposed displacement values (at the loading boundary nodes).
+
         force : np.ndarray
             Total reaction force corresponding to that displacement.
         """

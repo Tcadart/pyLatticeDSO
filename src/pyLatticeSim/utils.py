@@ -1,3 +1,12 @@
+# =============================================================================
+# UTILS FUNCTIONS FOR PYLATTICESIM
+#
+# DESCRIPTION:
+# This module contains utility functions for the pyLatticeSim package,
+# including functions to clear directories, compute directional stiffness
+# modulus, and create homogenization figures.
+# =============================================================================
+
 import os
 from pathlib import Path
 
@@ -32,8 +41,10 @@ def directional_modulus(matS: np.ndarray, theta: float, phi: float):
     matS : ndarray
         A 6-by-6 matrix defining the linear stress-to-strain relationship
         using the voigt notation.
+
     theta : float
         Polar angle in degree.
+
     phi : float
         Azimuthal angle in degree.
 
@@ -71,10 +82,13 @@ def create_homogenization_figure(mat_S_orthotropic: np.ndarray, plot: bool = Tru
     mat_S_orthotropic : ndarray
         A 6-by-6 matrix defining the linear stress-to-strain relationship
         using the voigt notation.
+
     plot : bool, optional
         If True, displays the plot. Default is True.
+
     save : bool, optional
         If True, save the plot to a file. Default is True.
+
     name_file : str, optional
         Name of the file to save the plot. Default is "homogenization_figure".
     """

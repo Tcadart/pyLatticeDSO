@@ -13,6 +13,4 @@ solver_DDM.solve_DDM()
 
 # Visualization with matplotlib
 vizualizer = LatticePlotting()
-vizualizer.visualize_lattice(solver_DDM, beam_color_type="radii",
-                             enable_boundary_conditions=True,
-                             deformedForm=True)
+vizualizer.visualize_lattice(solver_DDM, beam_color_type="radii", deformed_form=True, enable_boundary_conditions=True)

@@ -5,10 +5,8 @@ Gradient properties module.
 import math
 import random
 from enum import Enum
+from .timing import timing
 
-from .timing import *
-
-timing = Timing()
 
 
 def grad_settings_constant(num_cells_x: int, num_cells_y: int, num_cells_z: int, material_gradient: bool = False) -> (
@@ -19,8 +17,16 @@ def grad_settings_constant(num_cells_x: int, num_cells_y: int, num_cells_z: int,
     Parameters:
     -----------
     num_cells_x : int
+        Number of cells in the x-direction.
+
     num_cells_y : int
+        Number of cells in the y-direction.
+
     num_cells_z : int
+        Number of cells in the z-direction.
+
+    material_gradient : bool
+        If True, return a 3D list for material gradient; otherwise, return a flat list.
 
     Returns:
     --------
@@ -33,7 +39,7 @@ def grad_settings_constant(num_cells_x: int, num_cells_y: int, num_cells_z: int,
         total_cells = num_cells_x * num_cells_y * num_cells_z
         return [[1.0, 1.0, 1.0] for _ in range(total_cells)]
 
-
+@timing.category("gradient_properties")
 @timing.timeit
 def get_grad_settings(num_cells_x, num_cells_y, num_cells_z, grad_properties: list) -> list[list[float]]:
     """
@@ -43,10 +49,13 @@ def get_grad_settings(num_cells_x, num_cells_y, num_cells_z, grad_properties: li
     -----------
     num_cells_x : int
         Number of cells in the x-direction.
+
     num_cells_y : int
         Number of cells in the y-direction.
+
     num_cells_z : int
         Number of cells in the z-direction.
+
     gradProperties: list[Rule, Direction, Parameters]
         All types of properties for gradient definition.
 
@@ -128,6 +137,7 @@ def get_grad_settings(num_cells_x, num_cells_y, num_cells_z, grad_properties: li
     return gradientData
 
 
+@timing.category("gradient_properties")
 @timing.timeit
 def grad_material_setting(numCellsX, numCellsY, numCellsZ, gradMatProperty: list) -> list:
     """

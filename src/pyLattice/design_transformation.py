@@ -5,8 +5,11 @@ These functions can be used to modify the lattice geometry, such as attracting p
 applying cylindrical transformations, and fitting to surfaces.
 """
 import math
-from point import Point
+from .point import Point
+from .timing import timing
 
+@timing.category("design_transformation")
+@timing.timeit
 def attractor_lattice(lattice, PointAttractorList: list[float] = None, alpha: float = 0.5,
                       inverse: bool = False) -> None:
     """
@@ -16,8 +19,10 @@ def attractor_lattice(lattice, PointAttractorList: list[float] = None, alpha: fl
     -----------
     PointAttractor: list of float in dim 3
         Coordinates of the attractor point (default: None)
+
     alpha: float
         Coefficient of attraction (default: 0.5)
+
     inverse: bool
         If True, points farther away are attracted less (default: False)
     """
@@ -56,12 +61,14 @@ def attractor_lattice(lattice, PointAttractorList: list[float] = None, alpha: fl
         pointAttractor = Point(PointAttractorList[0], PointAttractorList[1], PointAttractorList[2])
 
     for cell in lattice.cells:
-        for beam in cell.beams:
+        for beam in cell.beams_cell:
             movePointAttracted(beam.point1, pointAttractor, alpha, inverse)
             movePointAttracted(beam.point2, pointAttractor, alpha, inverse)
     lattice.define_lattice_dimensions()
 
 
+@timing.category("design_transformation")
+@timing.timeit
 def curveLattice(lattice, center_x: float, center_y: float, center_z: float,
                  curvature_strength: float = 0.1) -> None:
     """
@@ -71,16 +78,19 @@ def curveLattice(lattice, center_x: float, center_y: float, center_z: float,
     -----------
     center_x: float
         The x-coordinate of the center of the curvature.
+
     center_y: float
         The y-coordinate of the center of the curvature.
+
     center_z: float
         The z-coordinate of the center of the curvature.
+
     curvature_strength: float (default: 0.1)
         The strength of the curvature applied to the lattice.
         Positive values curve upwards, negative values curve downwards.
     """
     for cell in lattice.cells:
-        for beam in cell.beams:
+        for beam in cell.beams_cell:
             for node in [beam.point1, beam.point2]:
                 x, y, z = node.x, node.y, node.z
                 # Calculate the distance from the center of curvature
@@ -91,7 +101,8 @@ def curveLattice(lattice, center_x: float, center_y: float, center_z: float,
                 node.move_to(x, y, new_z)
     lattice.define_lattice_dimensions()
 
-
+@timing.category("design_transformation")
+@timing.timeit
 def cylindrical_transform(lattice, radius: float) -> None:
     """
     Apply cylindrical transformation to the lattice structure.
@@ -105,18 +116,19 @@ def cylindrical_transform(lattice, radius: float) -> None:
     """
     max_y = lattice.size_y
     for cell in lattice.cells:
-        for beam in cell.beams:
-            for node in [beam.point1, beam.point2]:
-                x, y, z = node.x, node.y, node.z
-                # Convert Cartesian coordinates (x, y, z) to cylindrical coordinates (r, theta, z)
-                theta = (y / max_y) * 2 * math.pi  # theta = (y / total height) * 2 * pi
-                new_x = radius * math.cos(theta)
-                new_y = radius * math.sin(theta)
-                node.move_to(new_x, new_y, z)
+        for node in cell.points_cell:
+            x, y, z = node.x, node.y, node.z
+            # Convert Cartesian coordinates (x, y, z) to cylindrical coordinates (r, theta, z)
+            theta = (y / max_y) * 2 * math.pi  # theta = (y / total height) * 2 * pi
+            new_x = radius * math.cos(theta)
+            new_y = radius * math.sin(theta)
+            node.move_to(new_x, new_y, z)
     lattice.define_lattice_dimensions()
     lattice.delete_duplicated_beams()
 
 
+@timing.category("design_transformation")
+@timing.timeit
 def moveToCylinderForm(lattice, radius: float) -> None:
     """
     Move the lattice to a cylindrical form.
@@ -142,14 +154,15 @@ def moveToCylinderForm(lattice, radius: float) -> None:
         return radius - math.sqrt(radius ** 2 - (x_coords - lattice.x_max / 2) ** 2)
 
     for cell in lattice.cells:
-        for beam in cell.beams:
-            for node in [beam.point1, beam.point2]:
-                x, y, z = node.x, node.y, node.z
-                new_z = z - formula(x)
-                node.move_to(x, y, new_z)
+        for node in cell.points_cell:
+            x, y, z = node.x, node.y, node.z
+            new_z = z - formula(x)
+            node.move_to(x, y, new_z)
     lattice.define_lattice_dimensions()
 
 
+@timing.category("design_transformation")
+@timing.timeit
 def fitToSurface(lattice, equation: callable, mode: str = "z", params: dict = None):
     """
     Adjust the lattice nodes to follow a surface defined by an equation.
@@ -159,10 +172,12 @@ def fitToSurface(lattice, equation: callable, mode: str = "z", params: dict = No
     equation : callable
         Function representing the surface. For example, a lambda function or a normal function.
         Example: lambda x, y: x**2 + y**2 (for a paraboloid).
+
     mode : str
         Adjustment mode:
         - "z": Adjust nodes on a surface (z = f(x, y)).
         - "z_plan": Adjust nodes on a plan (z = f(x, y)) without changing the z-coordinate.
+
     params : dict
         Additional parameters for the equation or mode (e.g., radii, angle, etc.).
     """
@@ -170,23 +185,22 @@ def fitToSurface(lattice, equation: callable, mode: str = "z", params: dict = No
         params = {}
     nodeAlreadyChanged = []
     for cell in lattice.cells:
-        for beam in cell.beams:
-            for node in [beam.point1, beam.point2]:
-                x, y, z = node.x, node.y, node.z
-                if node not in nodeAlreadyChanged:
-                    nodeAlreadyChanged.append(node)
-                    # Adjust for a surface \( z = f(x, y) \)
-                    if mode == "z":
-                        new_z = equation(x, y, **params)
-                        new_z = z + new_z
-                        node.move_to(x, y, new_z)
-                    elif mode == "z_plan":
-                        new_z = equation(x, y, **params)
-                        node.move_to(x, y, new_z)
+        for node in cell.points_cell:
+            x, y, z = node.x, node.y, node.z
+            if node not in nodeAlreadyChanged:
+                nodeAlreadyChanged.append(node)
+                # Adjust for a surface \( z = f(x, y) \)
+                if mode == "z":
+                    new_z = equation(x, y, **params)
+                    new_z = z + new_z
+                    node.move_to(x, y, new_z)
+                elif mode == "z_plan":
+                    new_z = equation(x, y, **params)
+                    node.move_to(x, y, new_z)
 
-                    # Other modes can be added here (e.g. cylindrical, spherical)
-                    else:
-                        raise ValueError(f"Mode '{mode}' non supporté.")
+                # Other modes can be added here (e.g. cylindrical, spherical)
+                else:
+                    raise ValueError(f"Mode '{mode}' non supporté.")
 
     # Update lattice limits after adjustment
     lattice.define_lattice_dimensions()

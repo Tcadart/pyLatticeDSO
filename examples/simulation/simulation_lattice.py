@@ -16,9 +16,8 @@ sol, simulation_lattice = solve_FEM_FenicsX(lattice_Sim_object)
 
 # Visualization with matplotlib
 vizualizer = LatticePlotting()
-vizualizer.visualize_lattice(lattice_Sim_object, beam_color_type="radii",
-                             enable_boundary_conditions=True,
-                             deformedForm=True)
+vizualizer.visualize_lattice(lattice_Sim_object, beam_color_type="radii", deformed_form=True,
+                             enable_boundary_conditions=True)
 
 # Export the results to Paraview
 export_results = exportSimulationResults(simulation_lattice, name_file)

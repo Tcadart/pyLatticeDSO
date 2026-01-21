@@ -1,20 +1,39 @@
-"""
-Material class for Lattice Beam model in FenicsX
-"""
-import time
+# =============================================================================
+# CLASS: Material
+#
+# DESCRIPTION:
+# This class encapsulates all material properties for a lattice structure,
+# including methods to set material parameters, compute mechanical properties,
+# and calculate gradients with penalization for topology optimization.
+# =============================================================================
 import numpy as np
 import math
 
-from dolfinx.fem import Constant, Function, functionspace
 from ufl import as_vector
 
-from .utils_timing import Timing
-timingMaterial = Timing()
+from pyLattice.materials import MatProperties
+from pyLattice.timing import timing
+
+def _import_dolfinx_fem():
+    try:
+        from dolfinx import fem as _fem  # type: ignore
+        return _fem
+    except Exception as e:
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "dolfinx (and petsc4py) is required at runtime. "
+                    "For documentation builds this import is mocked. "
+                    f"Original import error: {e}"
+                )
+        return _Missing()
 
 class Material:
     """Encapsulates all material properties for a lattice structure."""
 
     def __init__(self, domain):
+        fem = _import_dolfinx_fem()
+
         self.domain = domain
 
         # Material properties
@@ -22,35 +41,43 @@ class Material:
         self._nu = None
         self._G = None
         self._rho = None
-        self._g = Constant(self.domain, 9.81)  # Default gravity
-        self._kappa = Constant(self.domain, 0.9)  # Shear area coefficient
+        self._g = fem.Constant(self.domain, 9.81)  # Default gravity
+        self._kappa = fem.Constant(self.domain, 0.9)  # Shear area coefficient
+        self._ES = None
+        self._EI1 = None
+        self._EI2 = None
+        self._GJ = None
+        self._GS1 = None
+        self._GS2 = None
 
         # Mechanical properties for beams
         self._initialize_function_spaces()
 
-    @timingMaterial.timeit
+    @timing.category("materialFEM")
+    @timing.timeit
     def _initialize_function_spaces(self):
         """Initialize function spaces for mechanical properties and gradients."""
-        V0 = functionspace(self.domain, ("DG", 0))
+        fem = _import_dolfinx_fem()
+        V0 = fem.functionspace(self.domain, ("DG", 0))
 
         # Mechanical properties
-        self._ES = Function(V0)
-        self._EI1 = Function(V0)
-        self._EI2 = Function(V0)
-        self._GJ = Function(V0)
-        self._GS1 = Function(V0)
-        self._GS2 = Function(V0)
+        self._ES = fem.Function(V0)
+        self._EI1 = fem.Function(V0)
+        self._EI2 = fem.Function(V0)
+        self._GJ = fem.Function(V0)
+        self._GS1 = fem.Function(V0)
+        self._GS2 = fem.Function(V0)
 
         # Gradient properties
-        self._ESgrad = Function(V0)
-        self._EI1grad = Function(V0)
-        self._EI2grad = Function(V0)
-        self._GJgrad = Function(V0)
-        self._GS1grad = Function(V0)
-        self._GS2grad = Function(V0)
+        self._ESgrad = fem.Function(V0)
+        self._EI1grad = fem.Function(V0)
+        self._EI2grad = fem.Function(V0)
+        self._GJgrad = fem.Function(V0)
+        self._GS1grad = fem.Function(V0)
+        self._GS2grad = fem.Function(V0)
 
         # Neutral radius for gradient computation
-        self.radiusNeutral = Function(V0)
+        self.radiusNeutral = fem.Function(V0)
 
     @property
     def E(self):
@@ -90,24 +117,28 @@ class Material:
         """Return gradient of mechanical properties as a vector."""
         return as_vector([self._ESgrad, self._GS1grad, self._GS2grad, self._GJgrad, self._EI1grad, self._EI2grad])
 
-    @timingMaterial.timeit
+    @timing.category("materialFEM")
+    @timing.timeit
     def set_material(self, lattice_material: "MatProperties"):
         """
         Define material properties for linear behavior based on material_name.
         """
+        fem = _import_dolfinx_fem()
         self._E = lattice_material.young_modulus
         self._nu = lattice_material.poisson_ratio
-        self._E = Constant(self.domain, self._E)
-        self._nu = Constant(self.domain, self._nu)
+        self._E = fem.Constant(self.domain, self._E)
+        self._nu = fem.Constant(self.domain, self._nu)
         G_value = self._E.value / (2 * (1 + self._nu.value))
-        self._G = Constant(self.domain, G_value)
+        self._G = fem.Constant(self.domain, G_value)
 
-    @timingMaterial.timeit
+    @timing.category("materialFEM")
+    @timing.timeit
     def set_density(self, density: float):
         """Define material density."""
         self._rho = Constant(self.domain, density)
 
-    @timingMaterial.timeit
+    @timing.category("materialFEM")
+    @timing.timeit
     def compute_mechanical_properties(self, radius):
         """Compute mechanical properties based on the beam radius."""
         if self._E is None or self._G is None:
@@ -124,7 +155,11 @@ class Material:
         self._GS1 = self._G * self._kappa * S
         self._GS2 = self._G * self._kappa * S
 
-    @timingMaterial.timeit
+    # =============================================================================
+    # SECTION: Gradient Computation with Penalized beams
+    # =============================================================================
+    @timing.category("materialFEM")
+    @timing.timeit
     def compute_gradient(self, radius, tagBeam, lattice):
         """
         Compute the gradient of mechanical properties, considering penalization.

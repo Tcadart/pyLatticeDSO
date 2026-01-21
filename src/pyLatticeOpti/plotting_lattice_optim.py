@@ -1,3 +1,12 @@
+# =============================================================================
+# CLASS: OptimizationPlotter
+#
+# DESCRIPTION:
+# This class provides functionality to plot the optimization progress of a lattice
+# structure, including compliance and relative density over iterations. It also
+# optionally visualizes the radius field on a specified plane.
+# =============================================================================
+
 import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
@@ -12,6 +21,7 @@ class OptimizationPlotter:
     ----------
     lattice : LatticeOpti
         The lattice optimization object.
+
     enable_field : bool, optional
         Whether to enable the radius field subplot (default: False).
     """
@@ -111,6 +121,7 @@ class OptimizationPlotter:
         ----------
         objective_norm : float
             The normalized objective value.
+
         theta : array_like
             The current parameters for the radius field.
         """

@@ -1,6 +1,7 @@
-"""
-Function for treating geometries JSON files
-"""
+# =============================================================================
+# FUNCTIONS: handle geometry JSON files and evaluate symbolic expressions
+# =============================================================================
+
 import json
 from pathlib import Path
 import random

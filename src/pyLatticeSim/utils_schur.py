@@ -1,10 +1,19 @@
-from typing import TYPE_CHECKING
-from pathlib import Path
+# =============================================================================
+# UTILS FOR SCHUR COMPLEMENT CALCULATION
+#
+# DESCRIPTION:
+# This module provides utility functions for calculating, saving,
+# loading, and normalizing the Schur complement of stiffness matrices
+# for lattice structures in finite element simulations.
+# =============================================================================
 
+from pathlib import Path
+import numpy as np
 from mpi4py import MPI
 
 from .beam_model import *
 from .schur_complement import SchurComplement
+
 if TYPE_CHECKING:
     from pyLatticeSim.lattice_sim import LatticeSim
     from pyLattice.cell import Cell
@@ -18,6 +27,7 @@ def get_schur_complement(lattice: "LatticeSim", cell_index: int = None):
     -----------
     lattice: Lattice object
         The lattice structure to be analyzed.
+
     cell_index: int, optional
         The index of the cell to be used for the Schur complement calculation.
         If None, the first cell is used.
@@ -50,8 +60,10 @@ def save_schur_complement_npz(lattice_object, radius_values: list, schur_matrice
     -----------
     lattice_object: LatticeSim
         The lattice object containing geometry and material information.
+
     radius_values: list
         A list of radius values corresponding to each Schur complement matrix.
+
     schur_matrices: list
         A list of Schur complement matrices to be saved.
     """
@@ -90,6 +102,7 @@ def load_schur_complement_dataset(lattice_object: "LatticeSim", enable_normaliza
     -------------
     lattice_object: LatticeSim
         The lattice object containing geometry and material information.
+
     enable_normalization: bool
         If True, normalize each Schur complement matrix.
 

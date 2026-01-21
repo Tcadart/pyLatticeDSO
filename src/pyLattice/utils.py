@@ -1,7 +1,6 @@
-"""
-Utility functions for plotting and saving lattice structures in 3D, validating inputs, and saving data in JSON
-format for Grasshopper compatibility.
-"""
+# =============================================================================
+# Utils for lattice design
+# =============================================================================
 import json
 import math
 import os
@@ -12,35 +11,16 @@ from typing import Tuple, TYPE_CHECKING
 import numpy as np
 import matplotlib.colors as mcolors
 
-if TYPE_CHECKING:
-    from pyLattice.lattice import Lattice
 
-
-def open_lattice_parameters(file_name: str):
-    """
-    Open a JSON file containing lattice parameters.
-
-    Parameters:
-    -----------
-    file_name: str
-        Name of the JSON file containing lattice parameters.
-    """
-    project_root = Path(__file__).resolve().parents[2]
-    json_path = project_root / "data" / "inputs" / "preset_lattice" / file_name
-    if json_path.suffix != ".json":
-        json_path = json_path.with_suffix('.json')
-
-    try:
-        with open(json_path, 'r') as file:
-            lattice_parameters = json.load(file)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"The file {json_path} does not exist.")
-    return lattice_parameters
+# =============================================================================
+# SECTION: Validation Inputs Class Methods
+# =============================================================================
 
 def _validate_inputs_lattice(cell_size_x, cell_size_y, cell_size_z,
                      num_cells_x, num_cells_y, num_cells_z,
                      geom_types, radii, grad_radius_property, grad_dim_property, grad_mat_property,
                      uncertainty_node, eraser_blocks):
+    """Validate inputs for the lattice constructor."""
     # Check cell sizes
     assert isinstance(cell_size_x, (int, float)) and cell_size_x > 0, "cell_size_x must be a positive number"
     assert isinstance(cell_size_y, (int, float)) and cell_size_y > 0, "cell_size_y must be a positive number"
@@ -92,7 +72,7 @@ def _validate_inputs_cell(
         uncertainty_node: float,
         _verbose: int,
 ):
-    """Validate inputs for the class constructor."""
+    """Validate inputs for the cell class constructor."""
 
     if not isinstance(pos, list) or len(pos) != 3:
         raise TypeError(f"'pos' must be a list of length 3, got {pos}")
@@ -124,30 +104,30 @@ def _validate_inputs_cell(
     if not isinstance(_verbose, int):
         raise TypeError(f"'_verbose' must be an int, got {_verbose}")
 
+# =============================================================================
+# SECTION: Input/Output Utility Functions
+# =============================================================================
 
-def function_penalization_Lzone(radius: float, angle: float) -> float:
+def open_lattice_parameters(file_name: str):
     """
-    Calculate the penalization length based on radii and angle.
+    Open a JSON file containing lattice parameters.
 
     Parameters:
     -----------
-    radius: float
-        Radius of the beam.
-    angle: float
-        Angle in degrees.
-
-    Returns:
-    -----------
-        float: Length of the penalization zone.
+    file_name: str
+        Name of the JSON file containing lattice parameters.
     """
-    # Case beam quasi-aligned, avoid division by zero
-    if angle > 170:
-        return 0.0000001
-    if angle == 0.0:
-        return 0.0
-    return radius / math.tan(math.radians(angle) / 2)
+    project_root = Path(__file__).resolve().parents[2]
+    json_path = project_root / "data" / "inputs" / "preset_lattice" / file_name
+    if json_path.suffix != ".json":
+        json_path = json_path.with_suffix('.json')
 
-
+    try:
+        with open(json_path, 'r') as file:
+            lattice_parameters = json.load(file)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"The file {json_path} does not exist.")
+    return lattice_parameters
 
 def save_lattice_object(lattice, file_name: str = "LatticeObject") -> None:
     """
@@ -164,6 +144,7 @@ def save_lattice_object(lattice, file_name: str = "LatticeObject") -> None:
     -----------
     lattice: Lattice
         Lattice object to save.
+
     file_name: str
         Name of the pickle file to save.
     """
@@ -380,6 +361,97 @@ def save_lattice_object(lattice, file_name: str = "LatticeObject") -> None:
     print(f"Lattice (base state) pickle saved successfully to {path}")
 
 
+def save_JSON_to_Grasshopper(lattice, nameLattice: str = "LatticeObject", multipleParts: int = 1) -> None:
+    """
+    Save the current lattice object to JSON files for Grasshopper compatibility, separating by cells.
+
+    Parameters:
+    -----------
+    lattice: Lattice
+        Lattice object to save.
+
+    nameLattice: str
+        Name of the lattice file to save.
+
+    multipleParts: int, optional (default: 1)
+        Number of parts to save.
+    """
+    folder_path = Path(__file__).resolve().parents[2] / "data" / "outputs" / "saved_lattice_file"
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+
+    numberCell = len(lattice.cells)
+    cellsPerPart = max(1, numberCell // multipleParts)
+
+    for partIdx in range(multipleParts):
+        partName = f"{nameLattice}_part{partIdx + 1}.json" if multipleParts > 1 else f"{nameLattice}.json"
+        file_pathJSON = os.path.join(folder_path, partName)
+
+        partNodesX = []
+        partNodesY = []
+        partNodesZ = []
+        partRadius = []
+
+        startIdx = partIdx * cellsPerPart
+        endIdx = min((partIdx + 1) * cellsPerPart, numberCell)
+
+        for cell in lattice.cells[startIdx:endIdx]:
+            for beam in cell.beams_cell:
+                partNodesX.append(beam.point1.x)
+                partNodesX.append(beam.point2.x)
+                partNodesY.append(beam.point1.y)
+                partNodesY.append(beam.point2.y)
+                partNodesZ.append(beam.point1.z)
+                partNodesZ.append(beam.point2.z)
+                partRadius.append(beam.radius)
+
+        obj = {
+            "nodesX": partNodesX,
+            "nodesY": partNodesY,
+            "nodesZ": partNodesZ,
+            "radii": partRadius,
+            "maxX": lattice.x_max,
+            "minX": lattice.x_min,
+            "maxY": lattice.y_max,
+            "minY": lattice.y_min,
+            "maxZ": lattice.z_max,
+            "minZ": lattice.z_min,
+            "relativeDensity": lattice.get_relative_density()
+        }
+
+        with open(file_pathJSON, 'w') as f:
+            json.dump(obj, f)
+
+        print(f"Saved lattice part {partIdx + 1} to {file_pathJSON}")
+
+
+# =============================================================================
+# SECTION: General Utility Functions
+# =============================================================================
+
+def function_penalization_Lzone(radius: float, angle: float) -> float:
+    """
+    Calculate the penalization length based on radii and angle.
+
+    Parameters:
+    -----------
+    radius: float
+        Radius of the beam.
+
+    angle: float
+        Angle in degrees.
+
+    Returns:
+    -----------
+        float: Length of the penalization zone.
+    """
+    # Case beam quasi-aligned, avoid division by zero
+    if angle > 170:
+        return 0.0000001
+    if angle == 0.0:
+        return 0.0
+    return radius / math.tan(math.radians(angle) / 2)
+
 def _prepare_lattice_plot_data(beam, deformedForm: bool = False):
     beamDraw = set()
     lines = []
@@ -398,7 +470,7 @@ def _prepare_lattice_plot_data(beam, deformedForm: bool = False):
     return lines, nodes, index
 
 
-def _get_beam_color(beam, color_palette, beamColor, idxColor, cells, nbRadiusBins):
+def _get_beam_color(beam, color_palette, beamColor, idxColor, cells, nbRadiusBins = 5) -> Tuple[str, list]:
     beamColor = beamColor.lower()
 
     def _to_scalar_radius(r):
@@ -457,214 +529,6 @@ def get_boundary_condition_color(fixed_DOF: list[bool]) -> str:
     color_index = bitmask % len(base_colors)
 
     return base_colors[color_index]
-
-
-def visualize_lattice_3D_interactive(lattice, beamColor: str = "Material", voxelViz: bool = False,
-                                     deformedForm: bool = False, plotCellIndex: bool = False) -> "go.Figure":
-    """
-    Visualizes the lattice in 3D using Plotly.
-
-    Parameters:
-    -----------
-    beamColor: string (default: "Material")
-        "Material" -> color by material
-        "Type" -> color by type_beam
-    voxelViz: boolean (default: False)
-        True -> voxel visualization
-        False -> beam visualization
-    deformedForm: boolean (default: False)
-        True -> deformed form
-    plotCellIndex: boolean (default: False)
-        True -> plot the index of each cell
-    """
-
-    color_list = ['blue', 'green', 'red', 'yellow', 'orange', 'purple', 'cyan', 'magenta']
-    fig = go.Figure()
-
-    if not voxelViz:
-        beamDraw = set()
-        nodeDraw = set()
-        node_coords = []
-        node_colors = []
-        lines_x = []
-        lines_y = []
-        lines_z = []
-        line_colors = []
-        node1 = None
-        node2 = None
-
-        for cell in lattice.cells:
-            for beam in cell.beams:
-                if beam not in beamDraw:
-                    if deformedForm:
-                        node1 = beam.point1.deformed_coordinates
-                        node2 = beam.point2.deformed_coordinates
-                    else:
-                        node1 = (beam.point1.x, beam.point1.y, beam.point1.z)
-                        node2 = (beam.point2.x, beam.point2.y, beam.point2.z)
-
-                    # Add the beam to the figure
-                    lines_x.extend([node1[0], node2[0], None])
-                    lines_y.extend([node1[1], node2[1], None])
-                    lines_z.extend([node1[2], node2[2], None])
-
-                    # Determine the color of the beam
-                    if beamColor == "Material":
-                        colorBeam = color_list[beam.material % len(color_list)]
-                    elif beamColor == "Type":
-                        colorBeam = color_list[beam.type_beam % len(color_list)]
-                    else:
-                        colorBeam = 'grey'
-
-                    line_colors.extend([colorBeam, colorBeam, colorBeam])
-
-                    beamDraw.add(beam)
-
-                # Add the nodes to the figure
-                for node in [node1, node2]:
-                    if node not in nodeDraw:
-                        node_coords.append(node)
-                        nodeDraw.add(node)
-                        # Determine the color of the node
-                        node_colors.append('black')
-
-            if plotCellIndex:
-                cell_center = cell.center_point
-                fig.add_trace(go.Scatter3d(
-                    x=[cell_center[0]],
-                    y=[cell_center[1]],
-                    z=[cell_center[2]],
-                    mode='text',
-                    text=str(cell.index),
-                    textposition="top center",
-                    showlegend=False
-                ))
-
-        # Add the beams to the figure
-        fig.add_trace(go.Scatter3d(
-            x=lines_x,
-            y=lines_y,
-            z=lines_z,
-            mode='lines',
-            line=dict(color=line_colors, width=5),
-            hoverinfo='none',
-            showlegend=False
-        ))
-
-        # Add the nodes to the figure
-        if node_coords:
-            node_x, node_y, node_z = zip(*node_coords)
-            fig.add_trace(go.Scatter3d(
-                x=node_x,
-                y=node_y,
-                z=node_z,
-                mode='markers',
-                marker=dict(size=4, color=node_colors),
-                hoverinfo='none',
-                showlegend=False
-            ))
-
-    else:
-        # Vizualize the lattice as a voxel grid
-        for cell in lattice.cells:
-            x, y, z = cell.coordinate
-            dx, dy, dz = cell.size
-
-            if beamColor == "Material":
-                colorCell = color_list[cell.beams[0].material % len(color_list)]
-            elif beamColor == "Type":
-                colorCell = color_list[int(str(cell.geom_types)[0]) % len(color_list)]
-            else:
-                colorCell = 'grey'
-
-            # Create the voxel
-            fig.add_trace(go.Mesh3d(
-                x=[x, x + dx, x + dx, x, x, x + dx, x + dx, x],
-                y=[y, y, y + dy, y + dy, y, y, y + dy, y + dy],
-                z=[z, z, z, z, z + dz, z + dz, z + dz, z + dz],
-                color=colorCell,
-                opacity=0.5,
-                showlegend=False
-            ))
-
-    # Configure the layout
-    limMin = min(lattice.x_min, lattice.y_min, lattice.z_min)
-    limMax = max(lattice.x_max, lattice.y_max, lattice.z_max)
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(title='X', range=[limMin, limMax], backgroundcolor='white', showgrid=True, zeroline=True),
-            yaxis=dict(title='Y', range=[limMin, limMax], backgroundcolor='white', showgrid=True, zeroline=True),
-            zaxis=dict(title='Z', range=[limMin, limMax], backgroundcolor='white', showgrid=True, zeroline=True),
-            aspectmode='cube'
-        ),
-        margin=dict(l=0, r=0, b=0, t=0),
-        showlegend=False
-    )
-
-    return fig  # Return the figure
-
-
-def save_JSON_to_Grasshopper(lattice, nameLattice: str = "LatticeObject", multipleParts: int = 1) -> None:
-    """
-    Save the current lattice object to JSON files for Grasshopper compatibility, separating by cells.
-
-    Parameters:
-    -----------
-    lattice: Lattice
-        Lattice object to save.
-    nameLattice: str
-        Name of the lattice file to save.
-    multipleParts: int, optional (default: 1)
-        Number of parts to save.
-    """
-    folder_path = Path(__file__).resolve().parents[2] / "data" / "outputs" / "saved_lattice_file"
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path)
-
-    numberCell = len(lattice.cells)
-    cellsPerPart = max(1, numberCell // multipleParts)
-
-    for partIdx in range(multipleParts):
-        partName = f"{nameLattice}_part{partIdx + 1}.json" if multipleParts > 1 else f"{nameLattice}.json"
-        file_pathJSON = os.path.join(folder_path, partName)
-
-        partNodesX = []
-        partNodesY = []
-        partNodesZ = []
-        partRadius = []
-
-        startIdx = partIdx * cellsPerPart
-        endIdx = min((partIdx + 1) * cellsPerPart, numberCell)
-
-        for cell in lattice.cells[startIdx:endIdx]:
-            for beam in cell.beams_cell:
-                partNodesX.append(beam.point1.x)
-                partNodesX.append(beam.point2.x)
-                partNodesY.append(beam.point1.y)
-                partNodesY.append(beam.point2.y)
-                partNodesZ.append(beam.point1.z)
-                partNodesZ.append(beam.point2.z)
-                partRadius.append(beam.radius)
-
-        obj = {
-            "nodesX": partNodesX,
-            "nodesY": partNodesY,
-            "nodesZ": partNodesZ,
-            "radii": partRadius,
-            "maxX": lattice.x_max,
-            "minX": lattice.x_min,
-            "maxY": lattice.y_max,
-            "minY": lattice.y_min,
-            "maxZ": lattice.z_max,
-            "minZ": lattice.z_min,
-            "relativeDensity": lattice.get_relative_density()
-        }
-
-        with open(file_pathJSON, 'w') as f:
-            json.dump(obj, f)
-
-        print(f"Saved lattice part {partIdx + 1} to {file_pathJSON}")
-
 
 def plot_coordinate_system(ax):
     """

@@ -10,9 +10,9 @@
       "y": 5,
       "z": 5
     },
-    "radii": [0.05, 0.05, 0.05],
+    "radii": [0.06, 0.03, 0.08],
     "geom_types": ["BCC", "Hybrid1", "Hybrid4"],
-    "enable_randomness": true,
+    "enable_randomness": false,
     "range_radius": [0.01, 0.1],
     "randomness_hybrid": false
   },

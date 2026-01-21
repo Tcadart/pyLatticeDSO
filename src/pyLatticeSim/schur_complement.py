@@ -1,15 +1,57 @@
-import numpy as np
-from dolfinx import fem
-from petsc4py import PETSc
-from dolfinx.fem import petsc
+# =============================================================================
+# CLASS: SchurComplement
+#
+# DESCRIPTION:
+# This class performs Schur Complement calculations on a given BeamModel.
+# =============================================================================
 
+import numpy as np
 
 from .simulation_base import SimulationBase
+from pyLattice.timing import timing
+
+def _import_dolfinx_fem():
+    try:
+        from dolfinx import fem as _fem  # type: ignore
+        return _fem
+    except Exception as e:
+        err_msg = f"{e!r}"
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "dolfinx (and petsc4py) is required at runtime. "
+                    "For documentation builds this import is mocked. "
+                    f"Original import error: {err_msg}"
+                )
+        return _Missing()
+
+fem = _import_dolfinx_fem()
+
+def _import_petsc4py():
+    try:
+        from petsc4py import PETSc as _PETSc  # type: ignore
+        return _PETSc
+    except Exception as e:
+        err_msg = f"{e!r}"
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "petsc4py is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err_msg}"
+                )
+        return _Missing()
+
+PETSc = _import_petsc4py()
 
 
 class SchurComplement(SimulationBase):
     """
     Class to perform Schur Complement calculations on a given BeamModel.
+
+    Parameters:
+    -----------
+    BeamModel : BeamModel
+        The beam model to perform the Schur Complement calculation on.
     """
 
     def __init__(self, BeamModel):
@@ -17,15 +59,18 @@ class SchurComplement(SimulationBase):
         self.prepare_simulation()
         self.construct_K()
 
-
+    @timing.category("schur_complement")
+    @timing.timeit
     def construct_K(self):
         """
         Construct K matrix from variational form
         """
         k = fem.form(self._k_form)
-        self._K = petsc.assemble_matrix(k)
+        self._K = fem.petsc.assemble_matrix(k)
         self._K.assemble()
 
+    @timing.category("schur_complement")
+    @timing.timeit
     def calculate_schur_complement(self, tags_nodes_boundary):
         """
         Calculate the Schur complement of the stiffness matrix.

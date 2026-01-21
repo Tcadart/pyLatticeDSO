@@ -1,0 +1,66 @@
+site_name: pyLattice
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - attr_list
+  - md_in_html
+  - footnotes
+  - tables
+  - def_list
+  - abbr
+  - smarty
+  - pymdownx.arithmatex:
+      generic: true
+  - sane_lists
+  - pymdownx.snippets
+  - pymdownx.inlinehilite
+  - pymdownx.critic
+  - pymdownx.keys
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            docstring_options:
+              ignore_init_summary: true
+            show_root_heading: true
+            show_source: false
+            summary: true
+
+nav:
+  - Accueil: index.md
+  - Guides:
+      - Installation: guides/Installation_tutorial.md
+      - Conditions aux limites: guides/Boundary_conditions.md
+      - MeshTrimmer: guides/MeshTrimmer_class.md
+      - Géométries de cellule: guides/cell_geometries.md
+      - Exemples: guides/Examples.md
+      - Export Grasshopper: guides/grasshopper_export.md
+      - Déploiement: guides/deploy-instructions.md
+  - Référence API:
+      - pyLattice: api/pylattice.md
+      - pyLatticeSim: api/pylatticesim.md
+      - pyLatticeOpti: api/pylatticeopti.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/<ton_repo>

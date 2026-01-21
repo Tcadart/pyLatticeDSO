@@ -1,3 +1,13 @@
+# =============================================================================
+# CLASS : ThinPlateSplineRBF
+#
+# DESCRIPTION:
+# This class implements a thin-plate-spline radial basis function (RBF)
+# interpolator with a linear polynomial tail. It supports vector-valued
+# outputs and provides methods for evaluating the interpolant and its
+# analytic gradient.
+# =============================================================================
+
 import numpy as np
 
 class ThinPlateSplineRBF:
@@ -13,8 +23,10 @@ class ThinPlateSplineRBF:
         ----------
         x_train : (N, d) array_like
             Training inputs (centers).
+
         y_train : (N,) or (N, m) array_like
             Training targets. If 1D, will be promoted to (N, 1).
+
         reg : float, optional
             Small Tikhonov regularization added to Phi's diagonal (stabilization on near-singular sets).
         """
@@ -48,7 +60,9 @@ class ThinPlateSplineRBF:
         self.W  = sol[:self.N, :]               # radial weights
         self.CP = sol[self.N:, :]               # polynomial coefficients [c0; c] stacked in rows
 
-    # ---------- kernels and assembly ----------
+    # =============================================================================
+    # SECTION: Kernel and assembly
+    # =============================================================================
     @staticmethod
     def _tps_phi(r):
         """Thin-plate spline kernel φ(r) = r^2 log(r), φ(0)=0 by continuity."""
@@ -62,7 +76,9 @@ class ThinPlateSplineRBF:
         r = np.linalg.norm(X1[:, None, :] - X2[None, :, :], axis=2)  # (N1, N2)
         return self._tps_phi(r)
 
-    # ---------- evaluation ----------
+    # =============================================================================
+    # SECTION: evaluation and gradient
+    # =============================================================================
     def evaluate(self, x):
         """
         Evaluate the interpolant at one or many points.
@@ -89,7 +105,6 @@ class ThinPlateSplineRBF:
         F = Phi_q @ self.W + P_q @ self.CP                                     # (M, m)
         return F[0] if M == 1 else F
 
-    # ---------- gradient ----------
     def gradient(self, x):
         """
         Evaluate the gradient ∇f at one or many points.

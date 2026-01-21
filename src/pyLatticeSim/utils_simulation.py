@@ -1,6 +1,14 @@
-from mpi4py import MPI
-from typing import TYPE_CHECKING
+# =============================================================================
+# UTILS FOR SIMULATION WITH FENICSX
+#
+# DESCRIPTION:
+# This module provides utility functions for performing finite element
+# simulations on lattice structures using the FenicsX library. It includes
+# functions for solving full-scale lattice simulations, cell-specific
+# simulations, and homogenization analysis.
+# =============================================================================
 
+from mpi4py import MPI
 
 from .beam_model import *
 from .full_scale_lattice_simulation import *
@@ -23,10 +31,10 @@ def solve_FEM_FenicsX(lattice : "LatticeSim"):
     --------
     xsol: numpy.ndarray
         The solution vector containing displacements.
+
     simulationModel: FullScaleLatticeSimulation
         The simulation model containing the results of the simulation.
     """
-    start_time = time.time()
     # Generate the lattice model and mesh
     LatticeModel = BeamModel(MPI.COMM_SELF, lattice=lattice)
 
@@ -39,7 +47,6 @@ def solve_FEM_FenicsX(lattice : "LatticeSim"):
     # Solve the problem
     simulationModel.solve_problem()
 
-    print("FEM problem solved in %s seconds ---" % (time.time() - start_time))
     # Assign results to lattice object
     simulationModel.set_result_diplacement_on_lattice_object()
     simulationModel.set_reaction_force_on_lattice_with_FEM_results()
@@ -56,6 +63,7 @@ def solve_FEM_cell(lattice: "LatticeSim", cell):
     -----------
     lattice: Lattice object
         The lattice structure to be simulated.
+
     cell: object
         The specific cell within the lattice to be analyzed.
 
@@ -85,6 +93,7 @@ def get_homogenized_properties(lattice: "LatticeSim"):
     --------
     mat_Sorthotropic: numpy.ndarray
         The homogenized orthotropic stiffness matrix.
+
     homogenization_analysis: HomogenizedCell
         The homogenization analysis object containing results and methods.
     """

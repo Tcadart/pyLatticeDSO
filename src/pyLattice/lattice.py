@@ -1,37 +1,34 @@
-"""
-lattice.py
-
-Generate lattice structures with various parameters and properties.
-
-This module provides the Lattice class, which allows for the creation and manipulation of lattice structures,
-including the definition of cell dimensions, material properties, and gradient settings. It also supports simulation methods and uncertainty handling.
-
-Created in 2023 by Cadart Thomas, University of technology Belfort Montbéliard.
-"""
+# =============================================================================
+# CLASS: Lattice
+#
+# Generate lattice structures with various parameters and properties.
+#
+# This module provides the Lattice class, which allows for the creation and manipulation of lattice structures,
+# including the definition of cell dimensions, material properties, and gradient settings.
+# It also supports simulation methods and uncertainty handling.
+#
+# Created in 2023 by Cadart Thomas, University of technology Belfort Montbéliard.
+# =============================================================================
 import os
 import pickle
-import random
 from statistics import mean
-from typing import TYPE_CHECKING
 from collections import Counter
-
 
 import gmsh
 
 from .cell import *
-from .plotting_lattice import LatticePlotting
-from .timing import *
 from .utils import _validate_inputs_lattice, open_lattice_parameters
 from .gradient_properties import get_grad_settings, grad_material_setting, grad_settings_constant
+from .timing import timing
 
-if TYPE_CHECKING:
-    from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
-
-timing = Timing()
+try:
+    from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer  # type: ignore
+except Exception:  # falls back during docs/CI when 'data' isn't available
+    from typing import Any as MeshTrimmer  # type: ignore
 
 class Lattice(object):
     """
-    Generate lattice structures with a lot of different parameters
+    Class to generate lattice structures with various parameters and properties.
     """
 
     def __init__(self, name_file: str, mesh_trimmer: "MeshTrimmer" = None, verbose: int = 0):
@@ -42,8 +39,10 @@ class Lattice(object):
         -----------
         name_file: str
             Name of the JSON file containing lattice parameters.
+
         mesh_trimmer: MeshTrimmer, optional
             MeshTrimmer object to trim the lattice.
+
         _verbose: int, optional
             Verbosity level for logging.
         """
@@ -60,6 +59,7 @@ class Lattice(object):
         self.radii = None
         self.geom_types = None
         self.enable_randomness = False
+        self.randomness_hybrid = None
         self.range_radius = None
         self.grad_dim, self.grad_radius, self.grad_mat = None, None, None
         self.symmetry_lattice = None
@@ -70,6 +70,7 @@ class Lattice(object):
         self._simulation_flag = False
         self._optimization_flag = False
 
+        # Containers
         self.cells = []
         self.beams = set()
         self.nodes = set()
@@ -192,6 +193,19 @@ class Lattice(object):
 
         return True
 
+    def get_number_cells(self) -> int:
+        """Get number of cells in the lattice"""
+        return len(self.cells)
+
+    def get_number_beams(self) -> int:
+        """Get number of beams in the lattice"""
+        return len(self.beams)
+
+    def get_number_nodes(self) -> int:
+        """Get number of nodes in the lattice"""
+        return len(self.nodes)
+
+    @timing.category("initialization")
     @timing.timeit
     def extract_parameters_from_json(self, name_file: str):
         """
@@ -258,7 +272,7 @@ class Lattice(object):
         ]
 
         # Supplementary
-        supplementary = lattice_parameters.get("suplementary", {})
+        supplementary = lattice_parameters.get("supplementary", {})
         self.uncertainty_node = supplementary.get("node_uncertainty", 0.0)
 
         # Erased blocks
@@ -294,11 +308,96 @@ class Lattice(object):
 
         self.define_gradient(grad_radius_property, grad_dim_property, grad_mat_property)
 
+    @timing.timeit
+    def get_lattice_boundary_box(self) -> list[float]:
+        """
+        Get the boundary box of the lattice
+        """
+        return [self.x_min, self.x_max, self.y_min, self.y_max, self.z_min, self.z_max]
 
+    @timing.category("design")
+    @timing.timeit
+    def define_lattice_dimensions(self) -> dict:
+        """
+        Computes extremum values of coordinates in the lattice.
+
+        Return:
+        --------
+        lattice_dimension_dict: dict
+            Dictionary containing min and max values for x, y, z coordinates.
+        """
+        if not self.nodes:
+            raise ValueError("No nodes in the lattice.")
+        xs = [n.x for n in self.nodes]
+        ys = [n.y for n in self.nodes]
+        zs = [n.z for n in self.nodes]
+        self.x_min, self.x_max = min(xs), max(xs)
+        self.y_min, self.y_max = min(ys), max(ys)
+        self.z_min, self.z_max = min(zs), max(zs)
+        self.lattice_dimension_dict = {
+            "x_min": self.x_min, "x_max": self.x_max,
+            "y_min": self.y_min, "y_max": self.y_max,
+            "z_min": self.z_min, "z_max": self.z_max,
+        }
+        return self.lattice_dimension_dict
+
+    def get_relative_density(self) -> float:
+        """
+        Get mean relative density of all cells in lattice
+        Simple average of cell relative densities
+
+        Returns:
+        --------
+        meanRelDens: float
+            Mean relative density of the lattice
+        """
+        cellRelDens = []
+        for cell in self.cells:
+            cellRelDens.append(cell.relative_density)
+        meanRelDens = mean(cellRelDens)
+        return meanRelDens
+
+    def get_beam_radius_min_max(self):
+        """
+        Get the maximum and minimum radii of the lattice
+
+        Returns:
+        --------
+        radMax: float
+            Maximum radii of the lattice
+
+        radMin: float
+            Minimum radii of the lattice
+        """
+        radMin = 1000000
+        radMax = 0
+        for cell in self.cells:
+            for beam in cell.beams_cell:
+                if not beam.beam_mod:
+                    radMin = min(radMin, beam.radius)
+                    radMax = max(radMax, beam.radius)
+        return radMax, radMin
+
+# =============================================================================
+# SECTION: Design Methods
+# =============================================================================
+
+    @timing.category("initialization")
     @timing.timeit
     def define_gradient(self, grad_radius_property, grad_dim_property, grad_mat_property):
         """
         Define gradient settings for radii, dimensions, and materials based on provided properties.
+
+        Parameters:
+        -----------
+        grad_radius_property: list
+            Properties defining the gradient for radii.
+
+        grad_dim_property: list
+            Properties defining the gradient for cell dimensions.
+
+        grad_mat_property: list
+            Properties defining the gradient for material settings.
         """
         if grad_radius_property is not None:
             self.grad_radius = get_grad_settings(self.num_cells_x, self.num_cells_y, self.num_cells_z,
@@ -315,6 +414,7 @@ class Lattice(object):
         else:
             self.grad_mat = grad_settings_constant(self.num_cells_x, self.num_cells_y, self.num_cells_z, True)
 
+    @timing.category("design")
     @timing.timeit
     def generate_lattice(self):
         """
@@ -380,6 +480,129 @@ class Lattice(object):
         if len(self.geom_types) > 1:
             self.check_hybrid_collision()
 
+    @timing.category("design")
+    @timing.timeit
+    def cut_beam_with_mesh_trimmer(self):
+        """
+        Cut beams in the lattice using the mesh trimmer.
+        """
+        if self.mesh_trimmer is None:
+            raise ValueError("A mesh object must be assigned to the lattice before cutting beams.")
+        self.mesh_trimmer.cut_beams_at_mesh_intersection(self.cells)
+
+    @timing.category("design")
+    @timing.timeit
+    def apply_symmetry(self, symmetry_plane: str = None, reference_point: Tuple = None) -> None:
+        """
+        Apply symmetry to the lattice by mirroring cells across a specified plane.
+
+        Parameters:
+        -----------
+        symmetry_plane: str, optional
+            Plane of symmetry ('XY', 'XZ', 'YZ', 'X', 'Y',
+            or 'Z'). If None, uses self.symmetry_lattice['sym_plane'].
+
+        reference_point: tuple of float, optional
+            Reference point for the symmetry operation (x_ref, y_ref, z_ref).
+            If None, uses self.symmetry_lattice['sym_point'].
+        """
+        if symmetry_plane is None and reference_point is None:
+            symmetry_plane, reference_point = self.symmetry_lattice["sym_plane"], self.symmetry_lattice["sym_point"]
+        if symmetry_plane is None or reference_point is None:
+            raise ValueError("Both symmetry_plane and reference_point must be provided.")
+        symmetry_plane = symmetry_plane.upper()
+        if symmetry_plane not in {"XY", "XZ", "YZ", "X", "Y", "Z"}:
+            raise ValueError("Invalid symmetry plane. Choose from 'XY', 'XZ', 'YZ', 'X', 'Y', or 'Z'.")
+
+        x_ref, y_ref, z_ref = reference_point
+
+        new_cells: list[Cell] = []
+        new_global_beams = []
+        new_global_nodes = []
+
+        for cell in self.cells:
+            # Mirror the cell origin/coordinate; size and pos are kept identical
+            cx, cy, cz = cell.coordinate
+            dx, dy, dz = cell.size
+
+            # Mirror min-corner of the box correctly: x'min = 2*x_ref - (x_min + dx), etc.
+            if symmetry_plane in {"YZ", "X"}:
+                mcx = 2 * x_ref - (cx + dx)
+            else:
+                mcx = cx
+
+            if symmetry_plane in {"XZ", "Y"}:
+                mcy = 2 * y_ref - (cy + dy)
+            else:
+                mcy = cy
+
+            if symmetry_plane in {"XY", "Z"}:
+                mcz = 2 * z_ref - (cz + dz)
+            else:
+                mcz = cz
+
+            new_coord = [mcx, mcy, mcz]
+
+            # Build the mirrored cell
+            new_cell = Cell(
+                pos=list(cell.pos),
+                initial_size=list(cell.size),
+                coordinate=list(new_coord),
+                geom_types=list(cell.geom_types),
+                radii=list(cell.radii),
+                grad_radius=cell.grad_radius,
+                grad_dim=cell.grad_dim,
+                grad_mat=cell.grad_mat,
+                uncertainty_node=getattr(cell, "uncertainty_node", 0.0),
+                _verbose=getattr(self, "_verbose", 0),
+            )
+
+            new_cells.append(new_cell)
+
+        # Append mirrored structures to lattice
+        self.cells.extend(new_cells)
+
+        if hasattr(self, "beams"):
+            if isinstance(self.beams, set):
+                self.beams.update(new_global_beams)
+            elif isinstance(self.beams, list):
+                self.beams.extend(new_global_beams)
+
+        if hasattr(self, "nodes"):
+            if isinstance(self.nodes, set):
+                self.nodes.update(new_global_nodes)
+            elif isinstance(self.nodes, list):
+                self.nodes.extend(new_global_nodes)
+
+        # Recompute lattice dimensions/bounding box
+        self.define_lattice_dimensions()
+
+    @timing.category("design")
+    @timing.timeit
+    def delete_beams_under_radius_threshold(self, threshold: float = 0.01) -> None:
+        """
+        Delete beams with radii under a certain threshold
+
+        Parameters:
+        -----------
+        threshold: float
+            Threshold value for beam radii
+        """
+        self._refresh_nodes_and_beams()
+        beam_to_remove = []
+        for beam in self.beams:
+            if beam.radius <= threshold:
+                beam_to_remove.append(beam)
+        for beam in beam_to_remove:
+            beam.destroy()
+        self._refresh_nodes_and_beams()
+        self.define_beam_node_index()
+        self.delete_orphan_points()
+
+# =============================================================================
+# SECTION: Helpers Methods
+# =============================================================================
+
     def set_tag_classification(self) -> None:
         """
         Define tag list classification.
@@ -388,15 +611,11 @@ class Lattice(object):
         self.face_tags = [[10, 15], [11, 14], [12, 13]]
         self.corner_tags = [[1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007]]
 
+    @timing.category("design")
     @timing.timeit
     def define_size_lattice(self):
         """
         Computes the size of the lattice along each direction.
-
-        Return:
-        ---------
-        size_lattice: list of float in dim 3
-            Length of the lattice in each direction
         """
         size_lattice = [0.0, 0.0, 0.0]
         for direction in range(3):
@@ -411,6 +630,7 @@ class Lattice(object):
 
         self.size_x, self.size_y, self.size_z = size_lattice
 
+    @timing.category("design")
     @timing.timeit
     def is_not_in_erased_region(self, start_cell_pos: list[float]) -> bool:
         """
@@ -438,6 +658,7 @@ class Lattice(object):
 
         return False  # cell removed
 
+    @timing.category("design")
     @timing.timeit
     def define_beam_node_index(self) -> None:
         """
@@ -474,8 +695,7 @@ class Lattice(object):
                 n.index = next_node_idx
                 next_node_idx += 1
 
-
-
+    @timing.category("design")
     @timing.timeit
     def define_cell_index(self) -> None:
         """
@@ -495,6 +715,7 @@ class Lattice(object):
                     cellIndexed[cell] = nextCellIndex
                     nextCellIndex += 1
 
+    @timing.category("design")
     @timing.timeit
     def define_node_local_tags(self) -> None:
         """
@@ -506,6 +727,8 @@ class Lattice(object):
                 if local_tag is not None:
                     node.set_local_tag(cell.index, local_tag)
 
+    @timing.category("design")
+    @timing.timeit
     def define_cell_neighbours(self) -> None:
         """
         Neighbour assignment using integer grid indices + optional periodic wrap.
@@ -575,6 +798,7 @@ class Lattice(object):
                 if neigh is not None:
                     c.add_cell_neighbour(axis, sign, neigh)
 
+    @timing.category("design")
     @timing.timeit
     def define_connected_beams_for_all_nodes(self, merge_tol: float = 1e-9) -> None:
         """
@@ -640,6 +864,7 @@ class Lattice(object):
         if getattr(self, "enable_periodicity", False):
             merge_bucket_connectivity(periodic_buckets)
 
+    @timing.category("design")
     @timing.timeit
     def define_angles_between_beams(self) -> None:
         """
@@ -675,39 +900,11 @@ class Lattice(object):
                 ang1, rad1 = _best_by_penalization(a1_list, r1_list)
                 b.set_angle(rad1, ang1, p)
 
-    @timing.timeit
-    def define_lattice_dimensions(self) -> dict:
-        """
-        Computes extremum values of coordinates in the lattice.
 
-        Return:
-        --------
-        lattice_dimension_dict: dict
-            Dictionary containing min and max values for x, y, z coordinates.
-        """
-        if not self.nodes:
-            raise ValueError("No nodes in the lattice.")
-        xs = [n.x for n in self.nodes]
-        ys = [n.y for n in self.nodes]
-        zs = [n.z for n in self.nodes]
-        self.x_min, self.x_max = min(xs), max(xs)
-        self.y_min, self.y_max = min(ys), max(ys)
-        self.z_min, self.z_max = min(zs), max(zs)
-        self.lattice_dimension_dict = {
-            "x_min": self.x_min, "x_max": self.x_max,
-            "y_min": self.y_min, "y_max": self.y_max,
-            "z_min": self.z_min, "z_max": self.z_max,
-        }
-        return self.lattice_dimension_dict
-
-    @timing.timeit
-    def get_lattice_boundary_box(self) -> list[float]:
-        """
-        Get the boundary box of the lattice
-        """
-        return [self.x_min, self.x_max, self.y_min, self.y_max, self.z_min, self.z_max]
-
-
+# =============================================================================
+# SECTION: Utils Methods
+# =============================================================================
+    @timing.category("utils")
     @timing.timeit
     def _refresh_nodes_and_beams(self) -> None:
         """
@@ -720,8 +917,8 @@ class Lattice(object):
         for cell in self.cells:
             self.nodes.update(cell.points_cell)
             self.beams.update(cell.beams_cell)
-        # self.refresh_cells_memberships()
 
+    @timing.category("utils")
     @timing.timeit
     def refresh_cells_memberships(self) -> None:
         """
@@ -729,8 +926,9 @@ class Lattice(object):
         """
         for c in self.cells:
             if hasattr(c, "refresh_from_global"):
-                c.refresh_from_global(self)
+                c.refresh_from_global(self.beams)
 
+    @timing.category("utils")
     @timing.timeit
     def remove_cell(self, index: int) -> None:
         """
@@ -746,6 +944,7 @@ class Lattice(object):
         else:
             raise IndexError("Invalid cell index.")
 
+    @timing.category("utils")
     @timing.timeit
     def find_minimum_beam_length(self) -> float:
         """
@@ -763,17 +962,20 @@ class Lattice(object):
                     minLength = beam.length
         return minLength
 
+    @timing.category("utils")
     @timing.timeit
     def get_tag_list(self) -> list[int]:
         """Get the tag for all unique points in the lattice."""
         return [n.tag for n in self.nodes]
 
+    @timing.category("utils")
     @timing.timeit
     def get_tag_list_boundary(self) -> list[int]:
         """Get the tag for boundary points in the lattice."""
         bbox = self.get_lattice_boundary_box()
         return [n.tag for n in self.nodes if n.is_on_boundary(bbox)]
 
+    @timing.category("utils")
     @timing.timeit
     def apply_tag_all_point(self) -> None:
         """
@@ -795,6 +997,7 @@ class Lattice(object):
             for n in cell.points_cell:
                 n.tag = n.tag_point(local_box)
 
+    @timing.category("utils")
     @timing.timeit
     def get_cell_occupancy_matrix(self):
         """
@@ -813,6 +1016,7 @@ class Lattice(object):
             self.occupancy_matrix[i, j, k] = cell
         return self.occupancy_matrix
 
+    @timing.category("utils")
     @timing.timeit
     def get_cells_at_index(self, axis: str, index: int) -> list:
         """
@@ -822,6 +1026,7 @@ class Lattice(object):
         -----------
         axis: str
             Axis to query ('x', 'y', or 'z').
+
         index: int
             Index along the specified axis.
         """
@@ -834,6 +1039,7 @@ class Lattice(object):
         else:
             raise ValueError("Axis must be 'x', 'y', or 'z'")
 
+    @timing.category("utils")
     @timing.timeit
     def get_relative_boundary_box(self, cell) -> list[float]:
         """
@@ -877,49 +1083,12 @@ class Lattice(object):
 
         return bbox
 
-    @timing.timeit
-    def get_connected_node(self, node: "Point") -> list["Point"]:
-        """
-        Get all nodes connected to the input node with a beam
-
-        Parameter:
-        -----------
-        node: point object
-
-        Return:
-        --------
-        connectedNode: List of a point object
-        """
-        connectedNode = []
-        nodeIndexRef = node.index
-        for cell in self.cells:
-            for beam in cell.beams_cell:
-                if beam.point1.index == nodeIndexRef:
-                    connectedNode.append(beam.point2)
-                if beam.point2.index == nodeIndexRef:
-                    connectedNode.append(beam.point1)
-        return connectedNode
-
-    @timing.timeit
-    def find_boundary_beams(self) -> list["Beam"]:
-        """Find boundary beams and change the type_beam of beam"""
-        bbox = self.get_lattice_boundary_box()
-        boundary = [b for b in self.beams if b.point1.is_on_boundary(bbox) or b.point2.is_on_boundary(bbox)]
-        for b in boundary:
-            b.type_beam = 2
-        return boundary
-
-    @timing.timeit
-    def find_boundary_nodes(self) -> list["Point"]:
-        """Find boundary nodes"""
-        return [n for n in self.nodes if n.x in (self.x_min, self.x_max)
-                or n.y in (self.y_min, self.y_max)
-                or n.z in (self.z_min, self.z_max)]
-
+    @timing.category("utils")
     @timing.timeit
     def get_name_lattice(self) -> str:
         """
         Determine the name_lattice of the lattice
+        WARNING: not updated
 
         Returns:
         ---------
@@ -935,6 +1104,7 @@ class Lattice(object):
             self.name_lattice += "_Mod"
         return self.name_lattice
 
+    @timing.category("utils")
     @timing.timeit
     def check_hybrid_collision(self) -> None:
         """
@@ -1042,50 +1212,63 @@ class Lattice(object):
         self.define_beam_node_index()
         self.define_connected_beams_for_all_nodes()
 
-    def get_node_coordinates_data(self) -> list[list[float]]:
+    @timing.category("utils")
+    @timing.timeit
+    def are_cells_identical(self) -> bool:
         """
-        Retrieves position data for the lattice.
-
-        Returns:
-        --------
-        posData: list of list of float
-            List of node positions
+        Check if all cells in the lattice are identical.
         """
-        return [[n.coordinates] for n in self.nodes]
+        if len(self.cells) < 2 and self._verbose > 0:
+            print(Fore.GREEN + "Only one or no cell: considered identical." + Style.RESET_ALL)
+            return True
 
-    def get_edge_index(self) -> list[list[int]]:
-        """
-        Retrieves edge index data for the lattice.
+        ref = self.cells[0]
 
-        Returns:
-        --------
-        edgeIndex: list of list of int
-            List of edge index
-        """
-        return [[b.point1.index, b.point2.index] for b in self.beams]
+        def _allclose(a, b):
+            try:
+                return np.allclose(a, b, rtol=1e-8, atol=1e-10, equal_nan=True)
+            except Exception:
+                return a == b
 
-    def get_all_beam_type(self) -> list:
-        """
-        Retrieves beam type_beam data for the lattice.
+        attrs_to_check = ["geom_types", "radii", "size", "grad_radius", "grad_dim"]
+        for i, c in enumerate(self.cells[1:], start=1):
+            for attr in attrs_to_check:
+                a0, a1 = getattr(ref, attr), getattr(c, attr)
+                if not _allclose(a0, a1):
+                    print(
+                        Fore.RED + f"Difference found in attribute '{attr}' between cell 0 and cell {i}" + Style.RESET_ALL)
+                    return False
 
-        Returns:
-        --------
-        beamType: list of int
-            List of beam types
-        """
-        return [[b.type_beam] for b in self.beams]
+        def _pt_local_key(p, cell, nd=9):
+            return (round(p.x - cell.coordinate[0], nd),
+                    round(p.y - cell.coordinate[1], nd),
+                    round(p.z - cell.coordinate[2], nd))
 
-    def get_all_beam_length(self) -> list[list[float]]:
-        """
-        Retrieves beam length data for the lattice.
+        def _beam_key(b, cell, ndp=9, ndr=9):
+            e1 = _pt_local_key(b.point1, cell, nd=ndp)
+            e2 = _pt_local_key(b.point2, cell, nd=ndp)
+            ends = tuple(sorted((e1, e2)))  # order-independent
+            return ends, round(float(b.radius), ndr), int(b.material), int(b.type_beam)
 
-        Returns:
-        --------
-        beamLength: list of float
-            List of beam lengths
-        """
-        return [[b.length] for b in self.beams]
+        def _beam_multiset(cell):
+            return Counter(_beam_key(b, cell) for b in cell.beams_cell if getattr(b, "radius", 0.0) > 0.0)
 
+        ref_ms = _beam_multiset(ref)
+        for i, c in enumerate(self.cells[1:], start=1):
+            if ref_ms != _beam_multiset(c):
+                print(Fore.RED + f"Beam topology/parameters differ between cell 0 and cell {i}" + Style.RESET_ALL)
+                return False
+
+        if self._verbose > 0:
+            print(Fore.GREEN + "All cells are identical." + Style.RESET_ALL)
+        return True
+
+# =============================================================================
+# SECTION: Optimization Methods
+# =============================================================================
+
+    @timing.category("optimization")
+    @timing.timeit
     def change_beam_radius(self, radius_list: list[float]) -> None:
         """
         Change beam radius for all beams in the lattice
@@ -1108,22 +1291,8 @@ class Lattice(object):
             else:
                 beam.radius = radius_list[beam.type_beam]
 
-
-    def get_relative_density(self) -> float:
-        """
-        Get mean relative density of all cells in lattice
-
-        Returns:
-        --------
-        meanRelDens: float
-            Mean relative density of the lattice
-        """
-        cellRelDens = []
-        for cell in self.cells:
-            cellRelDens.append(cell.relative_density)
-        meanRelDens = mean(cellRelDens)
-        return meanRelDens
-
+    @timing.category("optimization")
+    @timing.timeit
     def change_beam_radius_depending_type(self, typeToChange: int, newRadius: float) -> None:
         """
         Change radii of beam for specific type_beam
@@ -1140,18 +1309,12 @@ class Lattice(object):
                 if beam.type_beam == typeToChange:
                     beam.radius = newRadius
 
-    def get_number_cells(self) -> int:
-        """Get number of cells in the lattice"""
-        return len(self.cells)
+# =============================================================================
+# SECTION: Utils Methods
+# =============================================================================
 
-    def get_number_beams(self) -> int:
-        """Get number of beams in the lattice"""
-        return len(self.beams)
-
-    def get_number_nodes(self) -> int:
-        """Get number of nodes in the lattice"""
-        return len(self.nodes)
-
+    @timing.category("utils")
+    @timing.timeit
     def find_point_on_lattice_surface(self, surfaceNames: list[str], surface_cells: list[str] = None) -> set["Point"]:
         """
         Find points on the surface of the lattice
@@ -1160,6 +1323,7 @@ class Lattice(object):
         -----------
         surfaceNames: list[str]
             List of surfaces to find points on (e.g., ["Xmin", "Xmax", "Ymin"])
+
         surface_cells: list[str], optional
             List of surfaces to find points on cells (e.g., ["Xmin", "Xmax", "Ymin"]). If None, use surfaceNames.
 
@@ -1192,6 +1356,8 @@ class Lattice(object):
 
         return pointSet
 
+    @timing.category("utils")
+    @timing.timeit
     def get_cells_on_surfaces(self, surfaces: list[str]) -> list:
         """
         Return the list of Cell objects matching ordered extrema constraints like ["Xmin"], ["Xmin","Zmax"], etc.
@@ -1242,7 +1408,6 @@ class Lattice(object):
         occ = self.occupancy_matrix
         return [occ[i, j, k] for (i, j, k) in candidates if occ[i, j, k] is not None]
 
-
     def print_statistics_lattice(self):
         """
         Print statistics about the lattice
@@ -1256,221 +1421,8 @@ class Lattice(object):
         print("radii min: ", radMin)
         print("Lattice dimensions: ", self.size_x, self.size_y, self.size_z)
 
-    def get_beam_radius_min_max(self):
-        """
-        Get the maximum and minimum radii of the lattice
-
-        Returns:
-        --------
-        radMax: float
-            Maximum radii of the lattice
-        radMin: float
-            Minimum radii of the lattice
-        """
-        radMin = 1000000
-        radMax = 0
-        for cell in self.cells:
-            for beam in cell.beams_cell:
-                if not beam.beam_mod:
-                    radMin = min(radMin, beam.radius)
-                    radMax = max(radMax, beam.radius)
-        return radMax, radMin
-
+    @timing.category("utils")
     @timing.timeit
-    def cut_beam_with_mesh_trimmer(self):
-        """
-        Cut beams in the lattice using the mesh trimmer.
-        """
-        if self.mesh_trimmer is None:
-            raise ValueError("A mesh object must be assigned to the lattice before cutting beams.")
-        self.mesh_trimmer.cut_beams_at_mesh_intersection(self.cells)
-
-    # @timing.timeit
-    # def apply_symmetry(self, symmetry_plane:str = None, reference_point: Tuple = None) -> None:
-    #     """
-    #     Apply symmetry to the lattice structure based on a reference point.
-    #
-    #     Parameters:
-    #     -----------
-    #     symmetry_plane: str, optional
-    #         Plane of symmetry ('XY', 'XZ', 'YZ', 'X', 'Y', or 'Z'). If None, uses self.symmetry_lattice.
-    #     reference_point: tuple, optional
-    #         Reference point for symmetry (x_ref, y_ref, z_ref). If None, uses self.symmetry_lattice.
-    #     """
-    #     if symmetry_plane is None and reference_point is None:
-    #         symmetry_plane, reference_point = self.symmetry_lattice["sym_plane"], self.symmetry_lattice["sym_point"]
-    #     if symmetry_plane is None or reference_point is None:
-    #         raise ValueError("Both symmetry_plane and reference_point must be provided.")
-    #     symmetry_plane = symmetry_plane.upper()
-    #     if symmetry_plane not in ["XY", "XZ", "YZ", "X", "Y", "Z"]:
-    #         raise ValueError("Invalid symmetry plane. Choose from 'XY', 'XZ', 'YZ', 'X', 'Y', or 'Z'.")
-    #
-    #     x_ref, y_ref, z_ref = reference_point
-    #     new_cells = []
-    #     node_map = {}
-    #
-    #     for cell in self.cells:
-    #         new_pos = list(cell.pos)
-    #         new_start_pos = np.array(cell.coordinate)
-    #         mirrored_beams = []
-    #
-    #         for beam in cell.beams_cell:
-    #             new_point1 = Point(beam.point1.x, beam.point1.y, beam.point1.z)
-    #             new_point2 = Point(beam.point2.x, beam.point2.y, beam.point2.z)
-    #
-    #             # Apply symmetry transformation based on the selected plane
-    #             if symmetry_plane == "XY":
-    #                 new_point1.z = 2 * z_ref - new_point1.z
-    #                 new_point2.z = 2 * z_ref - new_point2.z
-    #                 new_start_pos[2] = 2 * z_ref - new_start_pos[2]
-    #             elif symmetry_plane == "XZ":
-    #                 new_point1.y = 2 * y_ref - new_point1.y
-    #                 new_point2.y = 2 * y_ref - new_point2.y
-    #                 new_start_pos[1] = 2 * y_ref - new_start_pos[1]
-    #             elif symmetry_plane == "YZ":
-    #                 new_point1.x = 2 * x_ref - new_point1.x
-    #                 new_point2.x = 2 * x_ref - new_point2.x
-    #                 new_start_pos[0] = 2 * x_ref - new_start_pos[0]
-    #             elif symmetry_plane == "X":
-    #                 new_point1.x = 2 * x_ref - new_point1.x
-    #                 new_point2.x = 2 * x_ref - new_point2.x
-    #                 new_start_pos[0] = 2 * x_ref - new_start_pos[0]
-    #             elif symmetry_plane == "Y":
-    #                 new_point1.y = 2 * y_ref - new_point1.y
-    #                 new_point2.y = 2 * y_ref - new_point2.y
-    #                 new_start_pos[1] = 2 * y_ref - new_start_pos[1]
-    #             elif symmetry_plane == "Z":
-    #                 new_point1.z = 2 * z_ref - new_point1.z
-    #                 new_point2.z = 2 * z_ref - new_point2.z
-    #                 new_start_pos[2] = 2 * z_ref - new_start_pos[2]
-    #
-    #             # Ensure uniqueness of nodes
-    #             if new_point1 not in node_map:
-    #                 node_map[new_point1] = new_point1
-    #             if new_point2 not in node_map:
-    #                 node_map[new_point2] = new_point2
-    #
-    #             mirrored_beams.append(
-    #                 Beam(node_map[new_point1], node_map[new_point2], beam.radius, beam.material, beam.type_beam, ))
-    #
-    #         # Create a new mirrored cell
-    #         new_cell = Cell(new_pos, cell.size, list(new_start_pos), cell.geom_types, cell.radii, cell.grad_radius,
-    #                         cell.grad_dim, cell.grad_mat, cell.uncertainty_node, self._verbose)
-    #
-    #         new_cell.beams_cell = mirrored_beams
-    #         new_cells.append(new_cell)
-    #
-    #     self.cells.extend(new_cells)
-    #     self.define_lattice_dimensions()  # Recalculate the lattice boundaries
-
-    @timing.timeit
-    def apply_symmetry(self, symmetry_plane: str = None, reference_point: Tuple = None) -> None:
-        """
-        Mirror the whole lattice w.r.t. a plane and append the mirrored copy.
-        - Deduplicates mirrored nodes globally (by rounded coordinates).
-        - Preserves sets for beams/points at cell level.
-        - Updates self.nodes / self.beams if they exist.
-        - Recomputes lattice bounding box at the end.
-        """
-        if symmetry_plane is None and reference_point is None:
-            symmetry_plane, reference_point = self.symmetry_lattice["sym_plane"], self.symmetry_lattice["sym_point"]
-        if symmetry_plane is None or reference_point is None:
-            raise ValueError("Both symmetry_plane and reference_point must be provided.")
-        symmetry_plane = symmetry_plane.upper()
-        if symmetry_plane not in {"XY", "XZ", "YZ", "X", "Y", "Z"}:
-            raise ValueError("Invalid symmetry plane. Choose from 'XY', 'XZ', 'YZ', 'X', 'Y', or 'Z'.")
-
-        x_ref, y_ref, z_ref = reference_point
-
-        def mirror_coords(x: float, y: float, z: float) -> Tuple[float, float, float]:
-            if symmetry_plane in {"XY", "Z"}:
-                return x, y, 2 * z_ref - z
-            if symmetry_plane in {"XZ", "Y"}:
-                return x, 2 * y_ref - y, z
-            # YZ or X
-            return 2 * x_ref - x, y, z
-
-        new_cells: list[Cell] = []
-        new_global_beams = []
-        new_global_nodes = []
-
-        for cell in self.cells:
-            # Mirror the cell origin/coordinate; size and pos are kept identical
-            cx, cy, cz = cell.coordinate
-            dx, dy, dz = cell.size
-
-            # Mirror min-corner of the box correctly: x'min = 2*x_ref - (x_min + dx), etc.
-            if symmetry_plane in {"YZ", "X"}:
-                mcx = 2 * x_ref - (cx + dx)
-            else:
-                mcx = cx
-
-            if symmetry_plane in {"XZ", "Y"}:
-                mcy = 2 * y_ref - (cy + dy)
-            else:
-                mcy = cy
-
-            if symmetry_plane in {"XY", "Z"}:
-                mcz = 2 * z_ref - (cz + dz)
-            else:
-                mcz = cz
-
-            new_coord = [mcx, mcy, mcz]
-
-            # Build the mirrored cell
-            new_cell = Cell(
-                pos=list(cell.pos),
-                initial_size=list(cell.size),
-                coordinate=list(new_coord),
-                geom_types=list(cell.geom_types),
-                radii=list(cell.radii),
-                grad_radius=cell.grad_radius,
-                grad_dim=cell.grad_dim,
-                grad_mat=cell.grad_mat,
-                uncertainty_node=getattr(cell, "uncertainty_node", 0.0),
-                _verbose=getattr(self, "_verbose", 0),
-            )
-
-            new_cells.append(new_cell)
-
-        # Append mirrored structures to lattice
-        self.cells.extend(new_cells)
-
-        if hasattr(self, "beams"):
-            if isinstance(self.beams, set):
-                self.beams.update(new_global_beams)
-            elif isinstance(self.beams, list):
-                self.beams.extend(new_global_beams)
-
-        if hasattr(self, "nodes"):
-            if isinstance(self.nodes, set):
-                self.nodes.update(new_global_nodes)
-            elif isinstance(self.nodes, list):
-                self.nodes.extend(new_global_nodes)
-
-        # Recompute lattice dimensions/bounding box
-        self.define_lattice_dimensions()
-
-    def delete_beams_under_radius_threshold(self, threshold: float = 0.01) -> None:
-        """
-        Delete beams with radii under a certain threshold
-
-        Parameters:
-        -----------
-        threshold: float
-            Threshold value for beam radii
-        """
-        self._refresh_nodes_and_beams()
-        beam_to_remove = []
-        for beam in self.beams:
-            if beam.radius <= threshold:
-                beam_to_remove.append(beam)
-        for beam in beam_to_remove:
-            beam.destroy()
-        self._refresh_nodes_and_beams()
-        self.define_beam_node_index()
-        self.delete_orphan_points()
-
     def delete_orphan_points(self):
         """
         Delete points that are not connected to any beam in the lattice.
@@ -1492,10 +1444,11 @@ class Lattice(object):
         self._refresh_nodes_and_beams()
         self.define_beam_node_index()
 
+    @timing.category("utils")
+    @timing.timeit
     def merge_degree2_nodes(
             self,
             colinear_only: bool = True,
-            angle_tol: float = 1e-9,
             radius_strategy: str = "inherit",  # "inherit" | "max" | "min" | "avg"
             type_strategy: str = "inherit",  # "inherit" -> si différents, on prend b1
             material_strategy: str = "inherit",  # idem
@@ -1511,28 +1464,31 @@ class Lattice(object):
         -----------
         colinear_only : bool
             If True, only merge if the two beams are colinear.
-        angle_tol : float
-            Tolerance for colinearity check (smaller = stricter).
+
         radius_strategy : str
             Strategy for determining the radius of the new beam:
             "inherit" (default) - if both beams have the same radius, use it; otherwise use b1's radius.
             "max" - use the maximum radius of the two beams.
             "min" - use the minimum radius of the two beams.
             "avg" - use the average radius of the two beams.
+
         type_strategy : str
             Strategy for determining the type of the new beam:
             "inherit" (default) - if both beams have the same type, use it; otherwise use b1's type.
             "max" - use the maximum type of the two beams.
             "min" - use the minimum type of the two beams.
             "avg" - use the average type of the two beams (rounded).
+
         material_strategy : str
             Strategy for determining the material of the new beam:
             "inherit" (default) - if both beams have the same material, use it; otherwise use b1's material.
             "max" - use the maximum material of the two beams.
             "min" - use the minimum material of the two beams.
             "avg" - use the average material of the two beams (rounded).
+
         iterative : bool
             If True, repeat the merging process until no more merges are possible or max_passes is reached.
+
         max_passes : int
             Maximum number of passes if iterative is True.
 
@@ -1650,11 +1606,12 @@ class Lattice(object):
             if not iterative or passes >= max_passes:
                 break
 
-        # Au cas où certains nœuds deviennent orphelins après fusion
         self.delete_orphan_points()
 
         return total_merged
 
+    @timing.category("utils")
+    @timing.timeit
     def delete_unconnected_beams(
             self,
             protect_fixed: bool = True,
@@ -1668,8 +1625,10 @@ class Lattice(object):
         -----------
         protect_fixed: bool
             If True, do not delete beams connected to fixed nodes.
+
         protect_loaded: bool
             If True, do not delete beams connected to loaded nodes.
+
         also_delete_orphan_nodes: bool
             If True, delete nodes that become orphaned after beam removal.
 
@@ -1725,6 +1684,11 @@ class Lattice(object):
 
         return len(to_remove), removed_pts
 
+# =============================================================================
+# SECTION: Other Methods
+# =============================================================================
+
+    @timing.category("meshing")
     @timing.timeit
     def generate_mesh_lattice_Gmsh(self, cut_mesh_at_boundary: bool = False, mesh_refinement: float = 1,
                                    name_mesh: str = "Lattice",save_mesh: bool = False, save_STL: bool = True,
@@ -1738,20 +1702,28 @@ class Lattice(object):
         -----------
         cut_mesh_at_boundary: bool
             If True, the mesh will be cut at the boundary of the lattice.
+
         mesh_refinement: float
             Refinement factor for the mesh (higher values lead to finer meshes).
+
         name_mesh: str
             Name of the mesh to be generated.
+
         save_mesh: bool
             If True, the mesh will be saved to a file.
+
         save_STL: bool
             If True, the mesh will be saved in STL format.
+
         volume_computation: bool
             If True, the volume of the mesh will be computed and printed.
+
         only_volume: bool
             If True, only the volume of the mesh will be computed and returned.
+
         only_relative_density: bool
             If True, only the relative density of the mesh will be computed and returned.
+
         cell_index: int | None
             If provided, only the specified cell will be meshed.
         """
@@ -1879,10 +1851,10 @@ class Lattice(object):
             if dmin <= rnear:
                 h = h_base
             elif dmin >= 3.0 * rnear:
-                h = float(mesh_size)
+                h = float(mesh_size_max)
             else:
                 t = (dmin - rnear) / (2.0 * rnear)  # linear ramp between r and 3r
-                h = h_base + t * (float(mesh_size) - h_base)
+                h = h_base + t * (float(mesh_size_max) - h_base)
 
             gmsh.model.mesh.setSize([(0, pt)], float(h))
 
@@ -1905,6 +1877,7 @@ class Lattice(object):
         if volume_computation:
             return total_volume
 
+    @timing.category("meshing")
     @timing.timeit
     def get_volume_mesh(self, entities_3d: list | None = None, synchronize: bool = True,
                         return_details: bool = False) -> float | dict:
@@ -1917,9 +1890,11 @@ class Lattice(object):
         entities_3d : list[(int,int)] | None
             Optional list of 3D OCC entities (pairs (dim=3, tag)). If None, all 3D
             entities in the current model are used.
+
         synchronize : bool
             If True, call gmsh.model.occ.synchronize() before querying mass properties.
             Set to False only if you've already synchronized after your boolean ops.
+
         return_details : bool
             If True, return a dict with 'total' and 'per_entity' (list of (tag, volume)).
 
@@ -1962,6 +1937,7 @@ class Lattice(object):
             return {'total': total, 'per_entity': details}
         return total
 
+    @timing.category("meshing")
     @timing.timeit
     def get_relative_density_mesh(self, solids_3d=None, domain_volume: float | None = None) -> float:
         """
@@ -1984,51 +1960,3 @@ class Lattice(object):
             raise ValueError("get_relative_density: domain volume must be positive.")
         return V_solid / V_domain
 
-    @timing.timeit
-    def are_cells_identical(self) -> bool:
-        """
-        Check if all cells in the lattice are identical.
-        """
-        if len(self.cells) < 2:
-            print(Fore.GREEN + "Only one or no cell: considered identical." + Style.RESET_ALL)
-            return True
-
-        ref = self.cells[0]
-
-        def _allclose(a, b):
-            try:
-                return np.allclose(a, b, rtol=1e-8, atol=1e-10, equal_nan=True)
-            except Exception:
-                return a == b
-
-        attrs_to_check = ["geom_types", "radii", "size", "grad_radius", "grad_dim"]
-        for i, c in enumerate(self.cells[1:], start=1):
-            for attr in attrs_to_check:
-                a0, a1 = getattr(ref, attr), getattr(c, attr)
-                if not _allclose(a0, a1):
-                    print(
-                        Fore.RED + f"Difference found in attribute '{attr}' between cell 0 and cell {i}" + Style.RESET_ALL)
-                    return False
-
-        def _pt_local_key(p, cell, nd=9):
-            return (round(p.x - cell.coordinate[0], nd),
-                    round(p.y - cell.coordinate[1], nd),
-                    round(p.z - cell.coordinate[2], nd))
-
-        def _beam_key(b, cell, ndp=9, ndr=9):
-            e1 = _pt_local_key(b.point1, cell, nd=ndp)
-            e2 = _pt_local_key(b.point2, cell, nd=ndp)
-            ends = tuple(sorted((e1, e2)))  # order-independent
-            return ends, round(float(b.radius), ndr), int(b.material), int(b.type_beam)
-
-        def _beam_multiset(cell):
-            return Counter(_beam_key(b, cell) for b in cell.beams_cell if getattr(b, "radius", 0.0) > 0.0)
-
-        ref_ms = _beam_multiset(ref)
-        for i, c in enumerate(self.cells[1:], start=1):
-            if ref_ms != _beam_multiset(c):
-                print(Fore.RED + f"Beam topology/parameters differ between cell 0 and cell {i}" + Style.RESET_ALL)
-                return False
-
-        print(Fore.GREEN + "All cells are identical." + Style.RESET_ALL)
-        return True

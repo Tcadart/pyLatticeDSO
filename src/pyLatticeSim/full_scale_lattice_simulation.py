@@ -1,12 +1,29 @@
-"""
-Class for full-scale lattice simulation.
-"""
-from basix.ufl import element
+# =============================================================================
+# CLASS: FullScaleLatticeSimulation
+#
+# DESCRIPTION:
+# This class handles full-scale lattice simulations using FenicsX.
+# =============================================================================
 import numpy as np
-import ufl
-from dolfinx import fem
 
 from .simulation_base import SimulationBase
+from pyLattice.timing import timing
+
+def _import_dolfinx_fem():
+    try:
+        from dolfinx import fem as _fem  # type: ignore
+        return _fem
+    except Exception as e:
+        class _Missing:
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "dolfinx (and petsc4py) is required at runtime. "
+                    "For documentation builds this import is mocked. "
+                    f"Original import error: {e}"
+                )
+        return _Missing()
+
+fem = _import_dolfinx_fem()
 
 class FullScaleLatticeSimulation(SimulationBase):
     """
@@ -17,6 +34,8 @@ class FullScaleLatticeSimulation(SimulationBase):
         super().__init__(BeamModel, verbose)
         self.prepare_simulation()
 
+    @timing.category("simulation")
+    @timing.timeit
     def apply_displacement_all_nodes_with_lattice_data(self):
         """
         Applying displacement at all nodes with lattice data.
@@ -53,6 +72,8 @@ class FullScaleLatticeSimulation(SimulationBase):
                     )
                     alreadyDone.append(node.index_boundary)
 
+    @timing.category("simulation")
+    @timing.timeit
     def set_result_diplacement_on_lattice_object(self):
         """
         Assigns the displacement and rotation values from the simulation to the lattice nodes.
@@ -85,6 +106,8 @@ class FullScaleLatticeSimulation(SimulationBase):
                     else:
                         print(f"⚠️ Missing rotation for {pos}")
 
+    @timing.category("simulation")
+    @timing.timeit
     def set_reaction_force_on_lattice_with_FEM_results(self):
         """
         Set reaction force on boundary condition nodes with FEM results.
@@ -96,6 +119,8 @@ class FullScaleLatticeSimulation(SimulationBase):
                         np.array([node.x, node.y, node.z]))
                     node.set_reaction_force(RF)
 
+    @timing.category("simulation")
+    @timing.timeit
     def apply_force_on_all_nodes_with_lattice_data(self):
         """
         Applying force at all nodes with lattice data.

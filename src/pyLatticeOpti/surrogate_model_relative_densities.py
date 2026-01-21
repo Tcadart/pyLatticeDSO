@@ -1,3 +1,12 @@
+# =============================================================================
+# MODULE: surrogate_model_relative_densities
+#
+# DESCRIPTION:
+# This module provides functions to compute, save, load, and evaluate
+# relative density datasets for lattice structures, as well as to train and
+# evaluate Kriging surrogate models using Gaussian Process Regression (GPR).
+# =============================================================================
+
 import os
 from itertools import product
 from pathlib import Path
@@ -7,20 +16,81 @@ import joblib
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-from scipy.spatial import KDTree
-from sklearn.compose import TransformedTargetRegressor
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
-matplotlib.use('TkAgg')  # Use TkAgg backend for interactive plots
+try:
+    from scipy.spatial import KDTree
+except Exception:
+    KDTree = None  # Allows importing this module during doc builds without SciPy binary compatibility.
 
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel
-from sklearn.gaussian_process.kernels import Product
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-from scipy.interpolate import griddata
+if not os.environ.get("DISPLAY") or os.environ.get("READTHEDOCS") or os.environ.get("PYLATTICE_DOCS"):
+    matplotlib.use("Agg")  # safe for CI/doc builds
+else:
+    matplotlib.use("TkAgg")
+
+def _import_sklearn_pipeline():
+    try:
+        from sklearn.pipeline import Pipeline as _Pipeline  # type: ignore
+        return _Pipeline
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __call__(self, *args, **kwargs):
+                raise RuntimeError(
+                    "scikit-learn is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+            def __getattr__(self, _name):
+                raise RuntimeError(
+                    "scikit-learn is required at runtime. For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+        return _Missing()
+
+Pipeline = _import_sklearn_pipeline()
+
+def _opt_import(mod: str, name: str, pkg_label: str = "scikit-learn"):
+    """
+    Import a symbol lazily. If unavailable, return a stub that raises
+    a clear RuntimeError only when used (runtime), not at import time.
+    """
+    try:
+        module = __import__(mod, fromlist=[name])
+        return getattr(module, name)
+    except Exception as e:
+        err = f"{e!r}"
+        class _Missing:
+            def __init__(self):
+                self.__name__ = name
+            def __call__(self, *args, **kwargs):
+                raise RuntimeError(
+                    f"{pkg_label} is required at runtime for '{name}'. "
+                    f"For documentation builds this import is mocked. "
+                    f"Original import error: {err}"
+                )
+            # Allow attribute access in case the caller tries methods/attrs
+            def __getattr__(self, _):
+                raise RuntimeError(
+                    f"{pkg_label} is required at runtime for '{name}'. "
+                    f"Original import error: {err}"
+                )
+        return _Missing()
+
+# scikit-learn symbols (lazy)
+StandardScaler      = _opt_import("sklearn.preprocessing", "StandardScaler")
+GaussianProcessRegressor = _opt_import("sklearn.gaussian_process", "GaussianProcessRegressor")
+RBF                 = _opt_import("sklearn.gaussian_process.kernels", "RBF")
+ConstantKernel      = _opt_import("sklearn.gaussian_process.kernels", "ConstantKernel")
+WhiteKernel         = _opt_import("sklearn.gaussian_process.kernels", "WhiteKernel")
+train_test_split    = _opt_import("sklearn.model_selection", "train_test_split")
+mean_squared_error  = _opt_import("sklearn.metrics", "mean_squared_error")
+r2_score            = _opt_import("sklearn.metrics", "r2_score")
+mean_absolute_error = _opt_import("sklearn.metrics", "mean_absolute_error")
+griddata = _opt_import("scipy.interpolate", "griddata", pkg_label="SciPy")
+
+
+# =============================================================================
+# SECTION: Dataset computation, saving, and loading
+# =============================================================================
 
 def _find_path_to_data(lattice_cell):
     """Determine a default dataset path based on lattice geometry."""
@@ -81,14 +151,14 @@ def compute_relative_densities_dataset(lattice_cell,
 
     for i, combo in enumerate(remaining, 1):
         print(f"Computing for radii: {combo}")
-        if i <= 0: # TODO a changer
-            combo = list(combo)
-            combo[0] += 0.001
-            lattice_cell.change_beam_radius(combo)
-            combo[0] -= 0.001
-            combo = tuple(combo)
-        else:
-            lattice_cell.change_beam_radius(list(combo))
+        # if i <= 0:
+        #     combo = list(combo)
+        #     combo[0] += 0.001
+        #     lattice_cell.change_beam_radius(combo)
+        #     combo[0] -= 0.001
+        #     combo = tuple(combo)
+        # else:
+        lattice_cell.change_beam_radius(list(combo))
         rd = lattice_cell.generate_mesh_lattice_Gmsh(volume_computation=True,
                                                      cut_mesh_at_boundary=True,
                                                      save_STL=False,
@@ -128,12 +198,16 @@ def load_dataset(path_dataset, name_dataset,
     ----------
     path_dataset : Path
         Path to the directory containing the dataset.
+
     name_dataset : str
         Name of the dataset (without extension).
+
     min_vol : float, optional
         Minimum volume to keep (None = no lower filter).
+
     max_vol : float, optional
         Maximum volume to keep (None = no upper filter).
+
     apply_variation_filter : bool, optional
         If True, apply the remove_large_volume_variations_dict filter.
 
@@ -177,19 +251,16 @@ def csv_to_dataset(csv_file: Path):
     except ImportError:
         import subprocess
         try:
-            # lance conda install dans l'environnement courant
             subprocess.check_call(["conda", "install", "-y", "pandas"])
             import pandas as pd
         except Exception:
             raise ImportError("Please install scikit-image to use this function.")
-    # Lire le CSV
     df = pd.read_csv(csv_file)
 
     required_cols = {"Radius1", "Radius2", "Radius3", "Volume"}
     if not required_cols.issubset(df.columns):
         raise ValueError(f"CSV must contain columns: {required_cols}")
 
-    # Construire le dict attendu
     relative_densities = {}
     for _, row in df.iterrows():
         key = (round(float(row["Radius1"]),3), round(float(row["Radius2"]),3), round(float(row["Radius3"]),3))
@@ -197,7 +268,7 @@ def csv_to_dataset(csv_file: Path):
 
     path_dataset = Path(__file__).parents[2] / "data" / "outputs" / "relative_densities" / "data"
     name_dataset = "Test"
-    # Sauvegarder avec ta fonction
+
     save_dataset(path_dataset, name_dataset, relative_densities)
     return relative_densities
 
@@ -246,6 +317,29 @@ def check_missing_entries(path_dataset: Path,
         "invalid_combinations": invalid,
     }
 
+# =============================================================================
+# SECTION: Visualization functions
+# =============================================================================
+
+def _load_dataset_for_plotting(lattice_cell=None, name_dataset=None):
+    """Helper to load dataset for plotting functions."""
+    if lattice_cell is not None:
+        path_dataset, name_dataset = _find_path_to_data(lattice_cell)
+        dataset_file = path_dataset / f"{name_dataset}.pkl"
+    else:
+        path_dataset = Path(__file__).parents[2] / "data" / "outputs" / "relative_densities" / "data"
+        dataset_file = path_dataset / f"{name_dataset}.pkl"
+    if not dataset_file.exists():
+        raise FileNotFoundError(f"No dataset found at {dataset_file}")
+
+    relative_densities = load_dataset(path_dataset, name_dataset)
+    if not relative_densities:
+        raise ValueError("Loaded dataset is empty.")
+
+    radii = np.array(list(relative_densities.keys()), dtype=float)    # shape (N, n_geom)
+    volumes = np.array(list(relative_densities.values()), dtype=float)  # shape (N,)
+
+    return radii, volumes
 
 def plot_3D_iso_surface(lattice_cell=None, name_dataset=None, n_levels = 10):
     """
@@ -255,6 +349,10 @@ def plot_3D_iso_surface(lattice_cell=None, name_dataset=None, n_levels = 10):
     ----------
     lattice_cell : Lattice
         Lattice object with exactly one cell and three geometry types.
+
+    name_dataset : str
+        Name of the dataset to load (without extension).
+
     n_levels : int, optional
         Number of iso-surface levels to plot (default is 10).
     """
@@ -272,21 +370,7 @@ def plot_3D_iso_surface(lattice_cell=None, name_dataset=None, n_levels = 10):
             raise ImportError("Please install scikit-image to use this function.")
 
     # --- Load dataset and build (radii, volumes) arrays ---
-    if lattice_cell is not None:
-        path_dataset, name_dataset = _find_path_to_data(lattice_cell)
-        dataset_file = path_dataset / f"{name_dataset}.pkl"
-    else:
-        path_dataset = Path(__file__).parents[2] / "data" / "outputs" / "relative_densities" / "data"
-        dataset_file = path_dataset / f"{name_dataset}.pkl"
-    if not dataset_file.exists():
-        raise FileNotFoundError(f"No dataset found at {dataset_file}")
-
-    relative_densities = load_dataset(path_dataset, name_dataset)
-    if not relative_densities:
-        raise ValueError("Loaded dataset is empty.")
-
-    radii = np.array(list(relative_densities.keys()), dtype=float)    # shape (N, n_geom)
-    volumes = np.array(list(relative_densities.values()), dtype=float)  # shape (N,)
+    radii, volumes = _load_dataset_for_plotting(lattice_cell, name_dataset)
 
     if radii.ndim != 2 or radii.shape[1] != 3:
         raise ValueError(f"Expected 3 radii per sample, got shape {radii.shape}")
@@ -358,21 +442,7 @@ def plot_3D_scatter(lattice_cell=None, name_dataset=None):
     if lattice_cell is None and name_dataset is None:
         raise ValueError("Either lattice_cell or name_dataset must be provided.")
     # --- Load dataset ---
-    if lattice_cell is not None:
-        path_dataset, name_dataset = _find_path_to_data(lattice_cell)
-        dataset_file = path_dataset / f"{name_dataset}.pkl"
-    else:
-        path_dataset = Path(__file__).parents[2] / "data" / "outputs" / "relative_densities" / "data"
-        dataset_file = path_dataset / f"{name_dataset}.pkl"
-    if not dataset_file.exists():
-        raise FileNotFoundError(f"No dataset found at {dataset_file}")
-
-    relative_densities = load_dataset(path_dataset, name_dataset)
-    if not relative_densities:
-        raise ValueError("Loaded dataset is empty.")
-
-    radii = np.array(list(relative_densities.keys()), dtype=float)    # shape (N, 3)
-    volumes = np.array(list(relative_densities.values()), dtype=float)  # shape (N,)
+    radii, volumes = _load_dataset_for_plotting(lattice_cell, name_dataset)
 
     if radii.ndim != 2 or radii.shape[1] != 3:
         raise ValueError(f"Expected 3 radii per sample, got shape {radii.shape}")
@@ -396,21 +466,24 @@ def remove_large_volume_variations_dict(relative_densities: dict,
                                         distance_threshold=0.02,
                                         variation_threshold=0.1):
     """
-    Supprime les entrées du dict où le volume varie fortement par rapport aux voisins proches.
+    Delete entries in the relative_densities dict where neighboring points (in radius space)
+    have volume differences exceeding variation_threshold.
 
     Parameters
     ----------
     relative_densities : dict
-        Dictionnaire { (r1, r2, r3): volume }
+        Dictionary with keys as radius tuples and values as relative densities.
+
     distance_threshold : float
-        Distance max pour considérer deux points comme voisins.
+        Maximum distance in radius space to consider points as neighbors.
+
     variation_threshold : float
-        Différence de volume considérée comme une forte variation.
+        Maximum allowed volume difference between neighboring points.
 
     Returns
     -------
-    filtered_dict : dict
-        Nouveau dictionnaire filtré.
+    dict
+        Filtered dictionary with large variations removed.
     """
 
     # Conversion en arrays pour KDTree
@@ -442,12 +515,15 @@ def remove_large_volume_variations_dict(relative_densities: dict,
 
     return filtered_dict
 
+# =============================================================================
+# SECTION: Kriging model training and evaluation
+# =============================================================================
+
 def evaluate_kriging_from_pickle(
     dataset_dir: Path,
     name_dataset: str,
     test_size: float = 0.2,
     model_name: str = "kriging_model_",
-    kernel: object | None = None,
     normalize_y: bool = True,
     random_state: int = 42,
     min_vol: float = 0.0,
@@ -461,20 +537,25 @@ def evaluate_kriging_from_pickle(
     ----------
     dataset_dir : Path
         Directory that contains '<name_dataset>.pkl' produced by `compute_relative_densities_dataset`.
+
     name_dataset : str
         Dataset base name (without extension).
+
     test_size : float, optional
         Fraction of samples used for testing (default 0.2).
+
     model_name : str | Path, optional
         Relative path (from the project root) where the trained model will be saved.
-    kernel : sklearn.gaussian_process.kernels.Kernel | None, optional
-        Custom GPR kernel. If None, a sensible default is used.
+
     normalize_y : bool, optional
         Whether to normalize the target inside the regressor (default True).
+
     random_state : int, optional
         Random seed for reproducibility.
+
     min_vol, max_vol : float, optional
         Filtering bounds for volumes (default 0.0–0.6).
+
     apply_variation_filter : bool, optional
         If True, apply the remove_large_volume_variations_dict filter.
 
@@ -597,8 +678,10 @@ def plot_parity(y_true, y_pred, save_path=None):
     ----------
     y_true : array-like
         Ground-truth values (test set).
+
     y_pred : array-like
         Predicted values (test set).
+
     save_path : str or Path, optional
         If provided, saves the figure to this path.
     """
@@ -665,21 +748,29 @@ def evaluate_saved_kriging(
     ----------
     dataset_dir : Path | None
         Directory containing '<name_dataset>.pkl'. If None, uses the default data path.
+
     name_dataset : str
         Dataset base name (without extension).
+
     model_name : str | None
         Relative path (from the project root) to the saved model.
+
     use_test_split : bool
         If True, evaluate on a train/test split (reproducible with `random_state`).
         If False, evaluate on the whole dataset.
+
     test_size : float
         Fraction of samples for testing when `use_test_split=True`.
+
     random_state : int
         Random seed for the split.
+
     min_vol, max_vol : float
         Volume filtering bounds passed to `load_dataset`.
+
     apply_variation_filter : bool
         Apply `remove_large_volume_variations_dict` during dataset loading.
+
     save_parity_path : Path | None
         If provided, saves the parity plot to this path.
 
@@ -784,7 +875,7 @@ def evaluate_saved_kriging(
         "model_path": str(model_path),
     }
 
-def _gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
+def gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
     """
     Exact gradient of the GPR predictive mean wrt inputs for either:
       • Pipeline(StandardScaler -> GaussianProcessRegressor), or

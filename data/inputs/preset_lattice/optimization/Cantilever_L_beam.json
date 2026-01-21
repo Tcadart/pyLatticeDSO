@@ -13,7 +13,7 @@
     "radii": [0.1, 0.1, 0.1],
     "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
   },
-  "suplementary": {
+  "supplementary": {
     "erased_blocks": {
       "block_0": {
         "start_point": {
