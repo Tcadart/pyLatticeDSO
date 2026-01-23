@@ -1,0 +1,23 @@
+{"cWire":
+    {"Length": 200, 
+    "Radius": 20, 
+    "C1": 2,
+    "eta": 0.8,
+    "N": 300,
+    "M": 30,
+    "Mesh_size": 5,
+    "Refine_factor": 0.75,
+    "Raw_stl": "na"}, 
+
+"Output":
+    {"ATOM": [],
+    "FEM": ["stl"]},
+
+"ATOM_Param":
+    {"Lattice_parameter": 4.07,
+    "Material": "Au",
+    "Orien_x": [1,0,0],
+    "Orien_y":[0,1,0] ,
+    "Orien_z": [0,0,1],
+    "Lattice_structure": "fcc"}
+}

@@ -15,6 +15,7 @@ from statistics import mean
 from collections import Counter
 
 import gmsh
+import numpy as np
 
 from .cell import *
 from .utils import _validate_inputs_lattice, open_lattice_parameters
@@ -25,6 +26,7 @@ try:
     from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer  # type: ignore
 except Exception:  # falls back during docs/CI when 'data' isn't available
     from typing import Any as MeshTrimmer  # type: ignore
+
 
 class Lattice(object):
     """
@@ -65,7 +67,7 @@ class Lattice(object):
         self.symmetry_lattice = None
         self.uncertainty_node = None
         self.eraser_blocks = None
-        self.enable_periodicity = False # Warning not working for graded structures
+        self.enable_periodicity = False  # Warning not working for graded structures
         self.enable_simulation_properties = False
         self._simulation_flag = False
         self._optimization_flag = False
@@ -378,9 +380,9 @@ class Lattice(object):
                     radMax = max(radMax, beam.radius)
         return radMax, radMin
 
-# =============================================================================
-# SECTION: Design Methods
-# =============================================================================
+    # =============================================================================
+    # SECTION: Design Methods
+    # =============================================================================
 
     @timing.category("initialization")
     @timing.timeit
@@ -421,7 +423,7 @@ class Lattice(object):
         Generate cells in the lattice structure based on cell size, number of cells, geometry types, and radii.
         Gradient information and erased regions are also considered during cell generation.
         """
-        random.seed(44) # For reproducibility of randomness
+        random.seed(44)  # For reproducibility of randomness
         nx, ny, nz = self.num_cells_x, self.num_cells_y, self.num_cells_z
         csx, csy, csz = self.cell_size_x, self.cell_size_y, self.cell_size_z
         grad = self.grad_dim
@@ -467,8 +469,8 @@ class Lattice(object):
                         self.geom_types, radii,
                         self.grad_radius, self.grad_dim, self.grad_mat,
                         self.uncertainty_node, self._verbose,
-                        beams_already_defined = added_beams,
-                        nodes_already_defined = added_nodes
+                        beams_already_defined=added_beams,
+                        nodes_already_defined=added_nodes
                     )
 
                     if mesh_trimmer and not mesh_trimmer.is_cell_in_mesh(new_cell):
@@ -599,9 +601,9 @@ class Lattice(object):
         self.define_beam_node_index()
         self.delete_orphan_points()
 
-# =============================================================================
-# SECTION: Helpers Methods
-# =============================================================================
+    # =============================================================================
+    # SECTION: Helpers Methods
+    # =============================================================================
 
     def set_tag_classification(self) -> None:
         """
@@ -872,6 +874,7 @@ class Lattice(object):
         using node-level connectivity (Point.connected_beams). Assumes
         `define_connected_beams_for_all_nodes()` has been called.
         """
+
         @timing.timeit
         def _best_by_penalization(angles: list[float], radii: list[float]) -> tuple[float, float]:
             """Return (angle, radius) that maximizes L = function_penalization_Lzone((radius, angle))."""
@@ -900,10 +903,9 @@ class Lattice(object):
                 ang1, rad1 = _best_by_penalization(a1_list, r1_list)
                 b.set_angle(rad1, ang1, p)
 
-
-# =============================================================================
-# SECTION: Utils Methods
-# =============================================================================
+    # =============================================================================
+    # SECTION: Utils Methods
+    # =============================================================================
     @timing.category("utils")
     @timing.timeit
     def _refresh_nodes_and_beams(self) -> None:
@@ -1263,9 +1265,9 @@ class Lattice(object):
             print(Fore.GREEN + "All cells are identical." + Style.RESET_ALL)
         return True
 
-# =============================================================================
-# SECTION: Optimization Methods
-# =============================================================================
+    # =============================================================================
+    # SECTION: Optimization Methods
+    # =============================================================================
 
     @timing.category("optimization")
     @timing.timeit
@@ -1309,9 +1311,9 @@ class Lattice(object):
                 if beam.type_beam == typeToChange:
                     beam.radius = newRadius
 
-# =============================================================================
-# SECTION: Utils Methods
-# =============================================================================
+    # =============================================================================
+    # SECTION: Utils Methods
+    # =============================================================================
 
     @timing.category("utils")
     @timing.timeit
@@ -1549,6 +1551,7 @@ class Lattice(object):
                         continue
 
                     cross_norm = np.linalg.norm(np.cross(v1, v2))
+                    angle_tol = 1e-6  # tolerance for colinearity
                     if cross_norm > angle_tol * (n1 * n2):
                         continue
                     if float(np.dot(v1, v2)) >= 0.0:
@@ -1652,7 +1655,6 @@ class Lattice(object):
             if not is_leaf_bar:
                 continue
 
-
             p1_fixed = any(b.point1.fixed_DOF)
             p2_fixed = any(b.point2.fixed_DOF)
             p1_load = any(abs(v) > 0.0 for v in b.point1.applied_force)
@@ -1665,7 +1667,6 @@ class Lattice(object):
                 continue
 
             to_remove.add(b)
-
 
         if not to_remove:
             return 0, 0
@@ -1684,14 +1685,14 @@ class Lattice(object):
 
         return len(to_remove), removed_pts
 
-# =============================================================================
-# SECTION: Other Methods
-# =============================================================================
+    # =============================================================================
+    # SECTION: Other Methods
+    # =============================================================================
 
     @timing.category("meshing")
     @timing.timeit
     def generate_mesh_lattice_Gmsh(self, cut_mesh_at_boundary: bool = False, mesh_refinement: float = 1,
-                                   name_mesh: str = "Lattice",save_mesh: bool = False, save_STL: bool = True,
+                                   name_mesh: str = "Lattice", save_mesh: bool = False, save_STL: bool = True,
                                    volume_computation: bool = False, only_volume: bool = False,
                                    only_relative_density: bool = False, cell_index: int = None) -> float | None:
         """
@@ -1806,7 +1807,6 @@ class Lattice(object):
                 gmsh.clear()
                 gmsh.finalize()
                 return total_volume
-
 
         # Define mesh size
         pts = gmsh.model.getEntities(0)
@@ -1960,3 +1960,182 @@ class Lattice(object):
             raise ValueError("get_relative_density: domain volume must be positive.")
         return V_solid / V_domain
 
+    @timing.category("meshing")
+    @timing.timeit
+    def generate_mesh_lattice_rough(self, name_file_rough_parameters: str, name_stl_out: str, print_volume: bool = True,
+                                    save_mesh: bool = True, cut_mesh_at_boundary: bool = False,
+                                    refine_mesh: bool = True) -> None:
+        """
+        Generate a mesh of the lattice structure with Pyrough library.
+
+        Parameters:
+        -----------
+        name_file_rough_parameters: str
+            Name of the file containing roughness parameters for Pyrough.
+        name_stl_out: str
+            Name of the output STL file.
+        print_volume: bool
+            If True, print the volume of the generated mesh.
+        save_mesh: bool
+            If True, save the generated mesh to the specified path.
+        cut_mesh_at_boundary: bool
+            If True, cut the mesh at the boundary of the lattice.
+        refine_mesh: bool
+            If True, refine the generated mesh using Pyrough's refinement function.
+        """
+
+        def rotation_matrix(axis: np.ndarray, angle: float) -> np.ndarray:
+            """
+            Generate a rotation matrix for rotating around a given axis by a specified angle.
+
+            Parameters:
+            -----------
+            axis: np.ndarray
+                A 3D vector representing the axis of rotation.
+            angle: float
+                The angle of rotation in radians.
+
+            Returns:
+            --------
+            np.ndarray
+            """
+            axis = axis / np.linalg.norm(axis)
+            x, y, z = axis
+            c = np.cos(angle)
+            s = np.sin(angle)
+            C = 1.0 - c
+
+            return np.array([
+                [c + x * x * C, x * y * C - z * s, x * z * C + y * s],
+                [y * x * C + z * s, c + y * y * C, y * z * C - x * s],
+                [z * x * C - y * s, z * y * C + x * s, c + z * z * C]
+            ])
+
+        def apply_rigid_transform(vertices: np.ndarray,
+                                  R: np.ndarray,
+                                  t: np.ndarray) -> np.ndarray:
+            """
+            Apply a rigid transformation to a set of vertices.
+
+            Parameters:
+            -----------
+            vertices: np.ndarray
+                An array of shape (N, 3) representing the vertices to transform.
+            R: np.ndarray
+                A 3x3 rotation matrix.
+            t: np.ndarray
+                A translation vector of shape (3,).
+
+            Returns:
+            --------
+            np.ndarray
+            """
+            return (R @ vertices.T).T + t
+
+        def rotation_from_z_axis(target_direction: np.ndarray) -> np.ndarray:
+            """
+            Generate a rotation matrix that aligns the z-axis with the target direction.
+
+            Parameters:
+            -----------
+            target_direction: np.ndarray
+                A 3D vector representing the target direction.
+
+            Returns:
+            --------
+            np.ndarray
+            """
+            z_axis = np.array([0.0, 0.0, 1.0])
+            v = target_direction / np.linalg.norm(target_direction)
+
+            axis = np.cross(z_axis, v)
+            norm_axis = np.linalg.norm(axis)
+
+            if norm_axis < 1e-12:
+                return np.eye(3)
+
+            axis /= norm_axis
+            angle = np.arccos(np.clip(np.dot(z_axis, v), -1.0, 1.0))
+
+            return rotation_matrix(axis, angle)
+
+        try:
+            from src import Param_class, Sample_class, Func_pyrough as fp
+        except ImportError:
+            raise ImportError("pyrough library is not installed. Please install it to use this feature.")
+
+        try:
+            import trimesh
+        except ImportError:
+            raise ImportError("trimesh library is not installed. Please install it to use this feature.")
+
+        project_root = Path(__file__).resolve().parents[2]
+        path_out = str(project_root / "data" / "outputs" / "Pyrough" / name_stl_out)
+
+        path_file_rough_parameters = str(project_root / "data" / "inputs" / "preset_lattice"
+                                         / "Pyrough" / name_file_rough_parameters)
+        param = Param_class.Parameter(path_file_rough_parameters)
+
+        all_meshes = []
+        # Generate the rough wire mesh for each beam
+        for beam in self.beams:
+            p1 = np.array(beam.point1.coordinates)
+            p2 = np.array(beam.point2.coordinates)
+            # Use initial radius if defined
+            radius = beam.initial_radius if getattr(beam, "initial_radius", None) is not None else beam.radius
+            vertices, faces = Sample_class.make_wire(
+                param.type_S,
+                2 * (1 + param.eta),
+                param.C1,
+                param.RMS,
+                param.N,
+                param.M,
+                radius,
+                beam.length,
+                param.ns,
+                param.alpha,
+                param.raw_stl,
+                path_out,
+                param.ext_fem,
+                make_stl=False,
+                verbose=0
+            )
+            # Positioning the wire at the correct location
+            direction = p2 - p1
+            # Rotate
+            R = rotation_from_z_axis(direction)
+            vertices = apply_rigid_transform(vertices, R, np.zeros(3))
+            # Translate so that the wire starts at point 1
+            vertices += p1
+            beam_mesh = trimesh.Trimesh(vertices, faces)
+            beam_mesh.fix_normals()
+            all_meshes.append(beam_mesh)
+
+        # Perform boolean union of all beam meshes
+        union_mesh = trimesh.boolean.union(all_meshes)
+
+        if cut_mesh_at_boundary:
+            # Bounding box definition
+            x0, y0, z0 = self.x_min, self.y_min, self.z_min
+            dx, dy, dz = self.x_max - x0, self.y_max - y0, self.z_max - z0
+
+            box = trimesh.creation.box(
+                extents=[dx, dy, dz],
+                transform=trimesh.transformations.translation_matrix(
+                    [x0 + dx / 2, y0 + dy / 2, z0 + dz / 2]
+                )
+            )
+            union_mesh = union_mesh.intersection(box)
+
+        if print_volume:
+            # Print the volume of the generated mesh
+            print("Lattice volume (pyrough mesh): ", union_mesh.volume)
+
+        if save_mesh:
+            # Save the final mesh
+            union_mesh.export(path_out + ".stl")
+            full_path = Path(path_out + ".stl").resolve()
+            print("Mesh saved at: ", full_path)
+
+        if refine_mesh:
+            fp.refine_3Dmesh(param.type_S, path_out, param.ns, param.alpha, param.ext_fem)

@@ -15,7 +15,7 @@ from src.pyLattice.utils import (
 def test_open_lattice_parameters():
     """Test opening lattice parameters from JSON file."""
     # Test with existing file
-    params = open_lattice_parameters("design/simple_BCC.json")
+    params = open_lattice_parameters("design/BCC_cell.json")
     assert isinstance(params, dict)
     assert "geometry" in params
     assert "cell_size" in params["geometry"]
