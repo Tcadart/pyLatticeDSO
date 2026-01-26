@@ -150,7 +150,7 @@ def save_lattice_object(lattice, file_name: str = "LatticeObject") -> None:
     """
     def _find_base_lattice_cls(obj):
         for cls in obj.__class__.__mro__:
-            if cls.__name__ == "Lattice" and getattr(cls, "__module__", "").endswith("pyLattice.lattice"):
+            if cls.__name__ == "Lattice" and getattr(cls, "__module__", "").endswith("pyLatticeDesign.lattice"):
                 return cls
         return None
 

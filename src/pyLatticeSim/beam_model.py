@@ -49,7 +49,7 @@ class BeamModel:
         MPI communicator for parallel computing
 
     lattice : LatticeObject
-        Lattice object from pyLattice
+        Lattice object from pyLatticeDesign
 
     cell_index : int, optional
         Index of the cell to generate the mesh for. If None, the entire lattice mesh is generated.

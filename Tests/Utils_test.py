@@ -4,7 +4,7 @@ import tempfile
 import json
 import os
 from pathlib import Path
-from src.pyLattice.utils import (
+from src.pyLatticeDesign.utils import (
     open_lattice_parameters, 
     _validate_inputs_lattice,
     _validate_inputs_cell,

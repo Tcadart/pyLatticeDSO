@@ -12,13 +12,13 @@ For questions, suggestions, or collaboration opportunities, please contact:
 1. **Fork and Clone**: Fork the repository and clone your fork locally:
    ```bash
    git clone https://github.com/yourusername/pyLattice.git
-   cd pyLattice
+   cd pyLatticeDesign
    ```
 
 2. **Environment Setup**: Create a development environment:
    ```bash
-   conda create -n pyLattice-dev python=3.12
-   conda activate pyLattice-dev
+   conda create -n pyLatticeDesign-dev python=3.12
+   conda activate pyLatticeDesign-dev
    pip install -e .[dev]
    ```
 

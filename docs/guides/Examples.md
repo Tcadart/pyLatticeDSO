@@ -197,7 +197,7 @@ Use the custom geometry:
 ```python
 from pyLattice.lattice import Lattice
 
-# The geometry file should be placed in src/pyLattice/geometries/
+# The geometry file should be placed in src/pyLatticeDesign/geometries/
 lattice = Lattice("design/config_with_custom_cell")
 ```
 

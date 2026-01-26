@@ -4,10 +4,10 @@ Main
 from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
 from pyLatticeOpti.lattice_opti import LatticeOpti
 from pyLatticeSim.lattice_sim import LatticeSim
-from src.pyLattice.plotting_lattice import LatticePlotting
-from src.pyLattice.lattice import Lattice
+from src.pyLatticeDesign.plotting_lattice import LatticePlotting
+from src.pyLatticeDesign.lattice import Lattice
 
-from src.pyLattice.utils import save_JSON_to_Grasshopper, save_lattice_object
+from src.pyLatticeDesign.utils import save_JSON_to_Grasshopper, save_lattice_object
 from pyLatticeSim.utils_simulation import solve_FEM_FenicsX
 from pyLatticeSim.export_simulation_results import exportSimulationResults
 

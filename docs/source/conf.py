@@ -13,7 +13,7 @@ print("Added to sys.path:", os.path.abspath(os.path.join(os.path.dirname(__file_
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'pyLattice'
+project = 'pyLatticeDesign'
 copyright = '2025, Thomas Cadart'
 author = 'Thomas Cadart'
 release = '1.1.0'

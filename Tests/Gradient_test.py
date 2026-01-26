@@ -1,6 +1,6 @@
 """Test module for gradient properties functionality."""
 import pytest
-from src.pyLattice.gradient_properties import (
+from src.pyLatticeDesign.gradient_properties import (
     grad_settings_constant,
     get_grad_settings
 )

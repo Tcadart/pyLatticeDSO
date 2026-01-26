@@ -21,8 +21,8 @@ This guide explains how to set up a Python environment with **conda** and instal
 We recommend Python **3.12** for compatibility with FEniCSx and PyEmbree.  
 
 ```bash
-conda create -n pyLattice python=3.12
-conda activate pyLattice
+conda create -n pyLatticeDesign python=3.12
+conda activate pyLatticeDesign
 ```
 
 ---

@@ -1,6 +1,6 @@
 """
 Script to be used in Grasshopper with GHPython component.
-Use save_JSON_to_Grasshopper from pyLattice.utils to export lattice from pyLattice to Grasshopper.
+Use save_JSON_to_Grasshopper from pyLatticeDesign.utils to export lattice from pyLatticeDesign to Grasshopper.
 See documentation for more information.
 """
 

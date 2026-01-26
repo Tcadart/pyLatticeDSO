@@ -4,8 +4,8 @@ import os
 import tempfile
 import json
 import time
-from src.pyLattice.materials import MatProperties
-from src.pyLattice.timing import Timing
+from src.pyLatticeDesign.materials import MatProperties
+from src.pyLatticeDesign.timing import Timing
 
 
 class TestMatProperties:

@@ -3,7 +3,7 @@ import os
 import tempfile
 import json
 import pytest
-from src.pyLattice.lattice import Lattice
+from src.pyLatticeDesign.lattice import Lattice
 
 
 @pytest.fixture

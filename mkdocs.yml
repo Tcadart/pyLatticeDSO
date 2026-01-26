@@ -1,4 +1,4 @@
-site_name: pyLattice
+site_name: pyLatticeDesign
 theme:
   name: material
   features:

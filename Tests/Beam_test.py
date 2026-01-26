@@ -1,8 +1,8 @@
 """Test module for Beam class functionality."""
 import pytest
-from src.pyLattice.point import Point
-from src.pyLattice.beam import Beam
-from src.pyLattice.cell import Cell
+from src.pyLatticeDesign.point import Point
+from src.pyLatticeDesign.beam import Beam
+from src.pyLatticeDesign.cell import Cell
 
 
 @pytest.fixture

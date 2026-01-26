@@ -11,7 +11,7 @@ class MatProperties:
     A class to represent the properties of a material loaded from a file.
     """
     project_root = Path(__file__).resolve().parents[2]
-    MATERIALS_DIR = project_root / "src" / "pyLattice" / "materials" # Directory containing material files
+    MATERIALS_DIR = project_root / "src" / "pyLatticeDesign" / "materials" # Directory containing material files
 
     def __init__(self, name_material: str):
         """

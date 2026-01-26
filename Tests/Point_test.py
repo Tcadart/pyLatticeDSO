@@ -1,8 +1,8 @@
 """Test module for Point class functionality."""
 import pytest
 import math
-from src.pyLattice.point import Point
-from src.pyLattice.cell import Cell
+from src.pyLatticeDesign.point import Point
+from src.pyLatticeDesign.cell import Cell
 
 
 @pytest.fixture
