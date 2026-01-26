@@ -29,6 +29,11 @@ extensions = [
     'sphinx_autodoc_typehints', # affiche les types Python
 ]
 
+source_suffix = {
+    ".rst": "restructuredtext",
+    ".md": "markdown",
+}
+
 templates_path = ['_templates']
 exclude_patterns = []
 

@@ -3,10 +3,10 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to pyLattice's documentation!
+Welcome to pyLatticeDSO's documentation!
 ============================================
 
-**pyLattice** is a comprehensive Python toolkit for designing, analyzing, and simulating lattice structures. 
+**pyLatticeDSO** is a comprehensive Python toolkit for designing, analyzing, and simulating lattice structures.
 The package provides capabilities for:
 
 - **Lattice Generation**: Create various lattice geometries (BCC, Octet, Kelvin, etc.)
@@ -27,17 +27,18 @@ Getting Started
    :maxdepth: 2
    :caption: User Guide:
 
-   Installation_tutorial
-   Examples
-   cell_geometries
-   Boundary_conditions
-   MeshTrimmer_class
+   guides/Installation_tutorial
+   guides/Examples
+   guides/cell_geometries
+   guides/Boundary_conditions
+   guides/MeshTrimmer_class
+   JSON_input_parameters
 
 .. toctree::
    :maxdepth: 2
    :caption: API Reference:
 
-   modules
+   api/test
 
 Indices and tables
 ==================
