@@ -1,4 +1,5 @@
 site_name: pyLatticeDesign
+docs_dir: docs/source
 theme:
   name: material
   features:
@@ -56,7 +57,7 @@ nav:
       - Export Grasshopper: guides/grasshopper_export.md
       - Déploiement: guides/deploy-instructions.md
   - Référence API:
-      - pyLattice: api/pylattice.md
+      - pyLattice: api/test.md
       - pyLatticeSim: api/pylatticesim.md
       - pyLatticeOpti: api/pylatticeopti.md
 

@@ -43,3 +43,6 @@ data/outputs/simulation_results/*
 
 # Sphinx documentation build files
 docs/build/
+
+# MkDocs documentation build files
+site/
