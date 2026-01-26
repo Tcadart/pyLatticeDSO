@@ -740,6 +740,7 @@ class LatticePlotting:
             from importlib import import_module
             plt = import_module('matplotlib.pyplot')
 
+        plt.tight_layout()
         plt.show()
 
 

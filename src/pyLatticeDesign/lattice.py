@@ -553,7 +553,7 @@ class Lattice(object):
                 geom_types=list(cell.geom_types),
                 radii=list(cell.radii),
                 grad_radius=cell.grad_radius,
-                grad_dim=cell.grad_dim,
+                grad_dim=None,
                 grad_mat=cell.grad_mat,
                 uncertainty_node=getattr(cell, "uncertainty_node", 0.0),
                 _verbose=getattr(self, "_verbose", 0),
