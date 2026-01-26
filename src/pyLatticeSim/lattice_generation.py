@@ -7,7 +7,7 @@
 
 import gmsh
 
-from pyLattice.timing import timing
+from pyLatticeDesign.timing import timing
 
 def _import_dolfinx_gmshio():
     try:

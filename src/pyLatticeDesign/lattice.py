@@ -1863,6 +1863,7 @@ class Lattice(object):
         gmsh.model.mesh.generate(2)
 
         project_root = Path(__file__).resolve().parents[2] / "data" / "outputs" / "mesh_file"
+        project_root.mkdir(parents=True, exist_ok=True)
         if save_mesh:
             path = project_root / f"{name_mesh}.msh"
             gmsh.write(str(path))

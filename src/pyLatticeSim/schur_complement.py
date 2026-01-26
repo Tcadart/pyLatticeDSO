@@ -8,7 +8,7 @@
 import numpy as np
 
 from .simulation_base import SimulationBase
-from pyLattice.timing import timing
+from pyLatticeDesign.timing import timing
 
 def _import_dolfinx_fem():
     try:
@@ -65,8 +65,9 @@ class SchurComplement(SimulationBase):
         """
         Construct K matrix from variational form
         """
+        import dolfinx.fem.petsc
         k = fem.form(self._k_form)
-        self._K = fem.petsc.assemble_matrix(k)
+        self._K = dolfinx.fem.petsc.assemble_matrix(k)
         self._K.assemble()
 
     @timing.category("schur_complement")

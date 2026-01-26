@@ -10,7 +10,7 @@
       "y": 1,
       "z": 6
     },
-    "radii": [0.1, 0.1, 0.1],
+    "radii": [0.05, 0.05, 0.05],
     "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
   },
   "supplementary": {
@@ -32,9 +32,10 @@
     "simulation_parameters": {
       "enable" : true,
       "material": "VeroClear",
-      "periodicity": false,
+      "periodicity": true,
       "DDM": {
         "enable_preconditioner": true,
+        "preconditioner_type": "mean",
         "max_iterations": 1000,
         "schur_complement_computation": {
           "type": "exact"

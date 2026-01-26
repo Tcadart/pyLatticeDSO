@@ -17,8 +17,8 @@ import joblib
 import numpy as np
 from colorama import Fore, Style
 
-from pyLattice.cell import Cell
-from pyLattice.utils import open_lattice_parameters
+from pyLatticeDesign.cell import Cell
+from pyLatticeDesign.utils import open_lattice_parameters
 from pyLatticeSim.conjugate_gradient_solver import conjugate_gradient_solver
 from pyLatticeSim.utils_simulation import solve_FEM_FenicsX
 from pyLatticeOpti.plotting_lattice_optim import OptimizationPlotter
@@ -28,7 +28,7 @@ from pyLatticeOpti.surrogate_model_relative_densities import _find_path_to_data
 if TYPE_CHECKING:
     from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
 
-from pyLattice.timing import timing
+from pyLatticeDesign.timing import timing
 
 def _opt_import(mod: str, name: str, pkg_label: str = "SciPy"):
     try:

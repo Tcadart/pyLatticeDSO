@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 from colorama import Fore, Style
 
-from pyLattice.beam import Beam
-from pyLattice.cell import Cell
-from pyLattice.lattice import Lattice
-from pyLattice.utils import open_lattice_parameters
+from pyLatticeDesign.beam import Beam
+from pyLatticeDesign.cell import Cell
+from pyLatticeDesign.lattice import Lattice
+from pyLatticeDesign.utils import open_lattice_parameters
 from pyLatticeSim.greedy_algorithm import load_reduced_basis
 from pyLatticeSim.utils_rbf import ThinPlateSplineRBF
 from pyLatticeSim.utils_schur import get_schur_complement
@@ -25,7 +25,7 @@ from pyLatticeSim.utils_simulation import solve_FEM_cell
 if TYPE_CHECKING:
     from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
 
-from pyLattice.timing import timing
+from pyLatticeDesign.timing import timing
 
 def _import_scipy_sparse():
     try:

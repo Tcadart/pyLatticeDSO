@@ -1,7 +1,7 @@
 """
 Examples of a simple optimization case.
 """
-from pyLattice.plotting_lattice import LatticePlotting
+from pyLatticeDesign.plotting_lattice import LatticePlotting
 from pyLatticeOpti.lattice_opti import LatticeOpti
 
 name_file = "optimization/optimization_beam_flexion"

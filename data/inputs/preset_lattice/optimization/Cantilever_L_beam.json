@@ -10,8 +10,8 @@
       "y": 1,
       "z": 6
     },
-    "radii": [0.1, 0.1, 0.1],
-    "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
+    "radii": [0.1, 0.1],
+    "geom_types": ["BCC", "Hybrid1"]
   },
   "supplementary": {
     "erased_blocks": {
@@ -65,7 +65,7 @@
       "max_iterations": 50,
       "optimization_parameters": {
         "type": "unit_cell",
-        "hybrid": false
+        "hybrid": true
       },
       "constraints": {
         "relative_density": {
@@ -75,6 +75,6 @@
       },
       "enable_parameter_normalization": true,
       "simulation_type": "DDM",
-      "enable_gradient_computing": false
+      "enable_gradient_computing": true
   }
 }

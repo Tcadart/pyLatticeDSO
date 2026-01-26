@@ -13,7 +13,7 @@ from ufl import (TestFunction, TrialFunction, split, as_vector, dot, grad, diag,
                  dx, action)
 from basix.ufl import element, mixed_element
 
-from pyLattice.timing import timing
+from pyLatticeDesign.timing import timing
 
 def _import_dolfinx_fem_common():
     try:

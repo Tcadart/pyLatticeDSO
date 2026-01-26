@@ -7,7 +7,7 @@
 import numpy as np
 
 from .simulation_base import SimulationBase
-from pyLattice.timing import timing
+from pyLatticeDesign.timing import timing
 
 def _import_dolfinx_fem():
     try:

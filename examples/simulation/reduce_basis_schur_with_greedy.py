@@ -8,7 +8,7 @@ from pyLatticeSim.greedy_algorithm import reduce_basis_greedy, find_name_file_re
 from pyLatticeSim.lattice_sim import LatticeSim
 
 name_file = "simulation/hybrid_cell_simulation"
-tolerance_greedy = 1e-6
+tolerance_greedy = 1e-3
 
 lattice_Sim_object = LatticeSim(name_file)
 

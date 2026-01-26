@@ -11,10 +11,10 @@
       "z": 1
     },
     "radii": [
-      0.05, 0.05, 0.05
+      0.05, 0.05
     ],
     "geom_types": [
-      "BCC", "Hybrid1", "Hybrid4"
+      "BCC", "Hybrid1"
     ]
   },
   "simulation_parameters": {

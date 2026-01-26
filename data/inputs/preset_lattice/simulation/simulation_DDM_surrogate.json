@@ -19,6 +19,7 @@
       "periodicity": true,
       "DDM": {
         "enable_preconditioner": true,
+        "preconditioner_type": "mean",
         "max_iterations": 1000,
         "schur_complement_computation": {
           "type": "RBF",

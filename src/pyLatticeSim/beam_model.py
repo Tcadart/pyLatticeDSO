@@ -15,15 +15,15 @@ from .lattice_generation import *
 from .material_definition import Material
 
 try:
-    from pyLattice.materials import MatProperties
+    from pyLatticeDesign.materials import MatProperties
 except ModuleNotFoundError:
     sys.path.append(str(Path(__file__).resolve().parents[1]))
-    from pyLattice.materials import MatProperties
+    from pyLatticeDesign.materials import MatProperties
 
 if TYPE_CHECKING:
     from src.pyLatticeSim.lattice_sim import LatticeSim
 
-from pyLattice.timing import timing
+from pyLatticeDesign.timing import timing
 
 def _import_dolfinx():
     try:

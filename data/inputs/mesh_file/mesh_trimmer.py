@@ -9,10 +9,10 @@ import numpy as np
 import trimesh
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-from pyLattice.beam import Beam
-from pyLattice.point import Point
-from pyLattice.cell import Cell
-from pyLattice.utils import plot_coordinate_system
+from pyLatticeDesign.beam import Beam
+from pyLatticeDesign.point import Point
+from pyLatticeDesign.cell import Cell
+from pyLatticeDesign.utils import plot_coordinate_system
 
 class MeshTrimmer:
     """
@@ -167,7 +167,7 @@ class MeshTrimmer:
             for beam in beams_to_remove:
                 cell.remove_beam(beam)
             for beam in new_beams:
-                cell.add_beam(beam)
+                cell.add_beam([beam])
 
     def find_intersection_with_mesh(self, beam: 'Beam') -> Tuple[float, float, float] | None:
         """

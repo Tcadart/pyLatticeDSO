@@ -11,7 +11,7 @@ import ufl
 from ufl import as_vector, dot
 
 from .simulation_base import SimulationBase
-from pyLattice.timing import timing
+from pyLatticeDesign.timing import timing
 
 def _import_dolfinx_stack():
     try:
@@ -280,6 +280,7 @@ class HomogenizedCell(SimulationBase):
         Function to solve multiple linear problem with the same LHS
         """
         fem, _, _ = _import_dolfinx_stack()
+        PETSc = _import_petsc4py()
 
         # Ensure solver is initialized
         self.initialize_solver()
@@ -409,6 +410,8 @@ class HomogenizedCell(SimulationBase):
         -------
         self.homogenizeMatrix: homogenization matrix
         """
+        _, _, common = _import_dolfinx_stack()
+
         ImposeStrainCase = range(1, 7)  # 6 loading cases
         self.homogenizeMatrix = []
         self.saveDataToExport = []

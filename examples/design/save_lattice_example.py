@@ -1,9 +1,9 @@
 """
 This example shows how to save a pickle lattice object.
 """
-from pyLattice.lattice import Lattice
-from pyLattice.plotting_lattice import LatticePlotting
-from pyLattice.utils import save_lattice_object
+from pyLatticeDesign.lattice import Lattice
+from pyLatticeDesign.plotting_lattice import LatticePlotting
+from pyLatticeDesign.utils import save_lattice_object
 
 
 path = "design/"

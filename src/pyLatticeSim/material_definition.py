@@ -11,8 +11,8 @@ import math
 
 from ufl import as_vector
 
-from pyLattice.materials import MatProperties
-from pyLattice.timing import timing
+from pyLatticeDesign.materials import MatProperties
+from pyLatticeDesign.timing import timing
 
 def _import_dolfinx_fem():
     try:

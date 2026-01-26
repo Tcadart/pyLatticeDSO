@@ -16,7 +16,7 @@ from .schur_complement import SchurComplement
 
 if TYPE_CHECKING:
     from pyLatticeSim.lattice_sim import LatticeSim
-    from pyLattice.cell import Cell
+    from pyLatticeDesign.cell import Cell
 
 
 def get_schur_complement(lattice: "LatticeSim", cell_index: int = None):

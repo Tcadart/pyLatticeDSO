@@ -600,7 +600,7 @@ def evaluate_kriging_from_pickle(
     )
 
     # Kernel definition
-    kernel = C(1.0, (1e-3, 1e3)) * RBF(length_scale=X.shape[1] * [1.0],
+    kernel = ConstantKernel(1.0, (1e-3, 1e3)) * RBF(length_scale=X.shape[1] * [1.0],
                                        length_scale_bounds=(1e-3, 1e3))
 
     pipe = Pipeline([
