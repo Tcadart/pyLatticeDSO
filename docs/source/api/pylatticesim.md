@@ -7,7 +7,6 @@
     options:
       show_root_heading: true
       members: true
-      special_members: ["__init__"]
       members_order: source
 
 ::: pyLatticeSim.simulation_base
