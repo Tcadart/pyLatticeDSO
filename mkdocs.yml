@@ -6,11 +6,14 @@ theme:
     - navigation.sections
     - navigation.expand
     - content.code.copy
+    - toc.follow
+    - navigation.top
 
 markdown_extensions:
   - admonition
   - toc:
       permalink: true
+      baselevel: 1
   - pymdownx.details
   - pymdownx.highlight
   - pymdownx.superfences
@@ -47,7 +50,7 @@ plugins:
             summary: true
 
 nav:
-  - Accueil: index.md
+  - Accueil: source/index.md
   - Guides:
       - Installation: guides/Installation_tutorial.md
       - Exemples: guides/Examples.md
@@ -64,5 +67,5 @@ nav:
 
 extra:
   social:
-    - icon: fontawesome/brands/github
-      link: https://github.com/<ton_repo>
+    - icon: /docs/source/images/pyLattice_logo.png
+    - link: https://github.com/Tcadart/pyLatticeDSO.git
