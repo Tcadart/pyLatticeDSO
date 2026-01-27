@@ -63,7 +63,7 @@ vizualizer = LatticePlotting()
 vizualizer.visualize_lattice(lattice_object, beam_color_type="radii")
 
 ```
-See the [MeshTrimmer class documentation](guides/MeshTrimmer_class.md) for more details.
+See the [MeshTrimmer class documentation](MeshTrimmer_class.md) for more details.
 
 ---
 

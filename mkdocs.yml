@@ -2,6 +2,7 @@ site_name: pyLatticeDesign
 docs_dir: docs/source
 theme:
   name: material
+  logo: images/pyLattice_logo.png
   features:
     - navigation.sections
     - navigation.expand
@@ -50,7 +51,7 @@ plugins:
             summary: true
 
 nav:
-  - Accueil: source/index.md
+  - Accueil: index.md
   - Guides:
       - Installation: guides/Installation_tutorial.md
       - Exemples: guides/Examples.md
@@ -60,6 +61,9 @@ nav:
       - Mesh trimming class: guides/MeshTrimmer_class.md
       - Export Grasshopper: guides/grasshopper_export.md
       - Roughness module: guides/Pyrough_compatibility.md
+      - Simulation: guides/simulation_methods.md
+      - Optimization: guides/optimization_methods.md
+
   - Référence API:
       - pyLattice: api/pylatticedesign.md
       - pyLatticeSim: api/pylatticesim.md
