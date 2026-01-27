@@ -2,7 +2,7 @@
 Simple example of how to use pyrough to create a BCC lattice cell with rough surfaces.
 """
 
-from pyLattice.lattice import Lattice
+from pyLatticeDesign.lattice import Lattice
 
 path_file_lattice = "Pyrough/BCC_cell"
 

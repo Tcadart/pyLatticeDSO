@@ -1,12 +1,6 @@
 # 📘 Installation Guide
 
 ## Overview
-**pyLattice** is a Python toolkit for the design, analysis, and finite element (FE) simulation of lattice structures.  
-The package supports:
-- **Lattice generation and visualization**  
-- **Mesh trimming and geometry operations**  
-- **Finite Element simulations with FEniCSx**  
-
 This guide explains how to set up a Python environment with **conda** and install all dependencies required for both core functionality and optional modules.
 
 ---
@@ -21,8 +15,8 @@ This guide explains how to set up a Python environment with **conda** and instal
 We recommend Python **3.12** for compatibility with FEniCSx and PyEmbree.  
 
 ```bash
-conda create -n pyLatticeDesign python=3.12
-conda activate pyLatticeDesign
+conda create -n pyLatticeDSO python=3.12
+conda activate pyLatticeDSO
 ```
 
 ---

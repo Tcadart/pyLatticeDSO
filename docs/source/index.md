@@ -1,11 +1,14 @@
+![pyLattice_logo](/docs/pyLattice_logo.png)
+
 # Welcome to pyLatticeDSO's documentation!
 
-**pyLatticeDSO** is a comprehensive Python toolkit for designing, analyzing, and simulating lattice structures.
+**pyLatticeDSO** is a Python toolkit for Designing, Simulating, and Optimizing truss-based lattice structures.
 The package provides capabilities for:
 
 - **Lattice Generation**: Create various lattice geometries (BCC, Octet, Kelvin, etc.)
-- **Visualization**: Interactive 3D plotting with matplotlib or Plotly
+- **Visualization**: Interactive 3D plotting with matplotlib
 - **Finite Element Analysis**: Structural simulations using FEniCSx
+- **Domain Decomposition Method**: An innovative approach for efficient simulations of large-scale lattice structures
 - **Mesh Operations**: Advanced geometry trimming and manipulation
 - **Optimization**: Topology and parameter optimization tools
 

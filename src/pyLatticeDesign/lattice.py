@@ -2063,7 +2063,8 @@ class Lattice(object):
         try:
             from src import Param_class, Sample_class, Func_pyrough as fp
         except ImportError:
-            raise ImportError("pyrough library is not installed. Please install it to use this feature.")
+            raise ImportError("Pyrough library is not installed. Please install it to use this feature."
+                              "More information in documentation")
 
         try:
             import trimesh

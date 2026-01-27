@@ -1,6 +1,6 @@
 # 📚 Examples
 
-This page provides practical examples of using pyLattice for various lattice design and simulation tasks.
+This page provides practical examples of using pyLatticeDSO for various lattice design, simulation tasks, and optimization scenarios. Each example includes code snippets and explanations to help you get started quickly.
 
 ---
 
@@ -10,8 +10,8 @@ This page provides practical examples of using pyLattice for various lattice des
 Create and visualize a basic Body-Centered Cubic (BCC) lattice structure:
 
 ```python
-from pyLattice.lattice import Lattice
-from pyLattice.plotting_lattice import LatticePlotting
+from pyLatticeDesign.lattice import Lattice
+from pyLatticeDesign.plotting_lattice import LatticePlotting
 
 # Load a simple BCC lattice configuration
 name_file = "design/simple_BCC"
@@ -25,17 +25,9 @@ visualizer.visualize_lattice(lattice_object, beam_color_type="radii")
 ### All Design Parameters
 Example showcasing all available design parameters:
 
-```python
-from pyLattice.lattice import Lattice
-from pyLattice.plotting_lattice import LatticePlotting
+::: examples.design.all_lattice_parameters.py
 
-name_file = "design/all_design_parameters"
-lattice_object = Lattice(name_file, verbose=1)
 
-# Visualize with different color schemes
-visualizer = LatticePlotting()
-visualizer.visualize_lattice(lattice_object, beam_color_type="materials")
-```
 
 ---
 
