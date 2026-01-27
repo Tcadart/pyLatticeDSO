@@ -6,8 +6,6 @@
     options:
       show_root_heading: true
       members: true
-      special_members: ["__init__","__repr__","__eq__"]
-      exclude_members: ["__weakref__"]
       members_order: source
 
 ::: pyLatticeDesign.cell
