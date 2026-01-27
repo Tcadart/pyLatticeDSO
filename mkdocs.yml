@@ -67,5 +67,4 @@ nav:
 
 extra:
   social:
-    - icon: /docs/source/images/pyLattice_logo.png
     - link: https://github.com/Tcadart/pyLatticeDSO.git
