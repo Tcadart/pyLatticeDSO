@@ -67,4 +67,5 @@ nav:
 
 extra:
   social:
-    - link: https://github.com/Tcadart/pyLatticeDSO.git
+    - icon: fontawesome/brands/github
+      link: https://github.com/Tcadart/pyLatticeDSO.git
