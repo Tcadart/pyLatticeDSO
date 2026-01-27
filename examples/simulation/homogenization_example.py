@@ -1,7 +1,6 @@
 """
 Simple homogenization example of a hybrid cell
 """
-from pyLatticeDesign.plotting_lattice import LatticePlotting
 from pyLatticeSim.lattice_sim import LatticeSim
 from pyLatticeSim.utils import create_homogenization_figure
 from pyLatticeSim.utils_simulation import get_homogenized_properties

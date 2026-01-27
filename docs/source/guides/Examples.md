@@ -13,21 +13,30 @@ Create and visualize a basic Body-Centered Cubic (BCC) lattice structure:
 from pyLatticeDesign.lattice import Lattice
 from pyLatticeDesign.plotting_lattice import LatticePlotting
 
-# Load a simple BCC lattice configuration
-name_file = "design/simple_BCC"
-lattice_object = Lattice(name_file)
+name_file = "design/"
+name_lattice = "simple_BCC"
 
-# Create visualizer and plot the lattice
-visualizer = LatticePlotting()
-visualizer.visualize_lattice(lattice_object, beam_color_type="radii")
+lattice_object = Lattice(name_file + name_lattice, verbose=1)
+
+vizualizer = LatticePlotting()
+vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", enable_system_coordinates=False)
+
 ```
 
 ### All Design Parameters
 Example showcasing all available design parameters:
 
-::: examples.design.all_lattice_parameters.py
+```python
+from pyLatticeDesign.lattice import Lattice
+from pyLatticeDesign.plotting_lattice import LatticePlotting
 
+name_file = "design/all_design_parameters"
 
+lattice_object = Lattice(name_file, verbose=1)
+
+vizualizer = LatticePlotting()
+vizualizer.visualize_lattice(lattice_object)
+```
 
 ---
 
@@ -37,23 +46,24 @@ Example showcasing all available design parameters:
 Use MeshTrimmer to cut lattice structures to fit complex geometries:
 
 ```python
-from pyLattice.lattice import Lattice
-from pyLattice.plotting_lattice import LatticePlotting
+from src.pyLatticeDesign.plotting_lattice import LatticePlotting
+from src.pyLatticeDesign.lattice import Lattice
+
 from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
 
-# Load a mesh (e.g., bone structure)
-name_mesh = "CutedBone"
+name_mesh = "CutedBone"  # get from https://anatomytool.org/content/thunthu-3d-model-bones-lower-limb
 mesh_trimmer = MeshTrimmer(name_mesh)
-mesh_trimmer.scale_mesh(1.5)
+mesh_trimmer.plot_mesh(zoom = 3)
 
-# Create lattice with mesh trimming
-name_lattice = "Bone_cuted_hybrid"
-lattice_object = Lattice.from_json(name_lattice, mesh_trimmer)
+name_lattice = "design/BCC_trimmed_example"
+lattice_object = Lattice(name_lattice, mesh_trimmer)
+lattice_object.cut_beam_with_mesh_trimmer()
 
-# Visualize the trimmed lattice
-visualizer = LatticePlotting()
-visualizer.visualize_lattice(lattice_object)
+vizualizer = LatticePlotting()
+vizualizer.visualize_lattice(lattice_object, beam_color_type="radii")
+
 ```
+See the [MeshTrimmer class documentation](guides/MeshTrimmer_class.md) for more details.
 
 ---
 
@@ -64,78 +74,71 @@ Perform a finite element simulation using pyLatticeSim:
 
 ```python
 from pyLatticeSim.lattice_sim import LatticeSim
-from pyLattice.plotting_lattice import LatticePlotting
+from pyLatticeDesign.plotting_lattice import LatticePlotting
 from pyLatticeSim.utils_simulation import solve_FEM_FenicsX
 from pyLatticeSim.export_simulation_results import exportSimulationResults
 
-# Load simulation configuration
-name_file = "simulation/beam_flexion"
-lattice_sim = LatticeSim(name_file, verbose=1)
 
-# Run FE simulation
-result = solve_FEM_FenicsX(lattice_sim)
+name_file = "simulation/simulation_beam_flexion"
 
-# Export results
-exportSimulationResults(lattice_sim, result)
+lattice_Sim_object = LatticeSim(name_file)
+
+sol, simulation_lattice = solve_FEM_FenicsX(lattice_Sim_object)
+
+# Visualization with matplotlib
+vizualizer = LatticePlotting()
+vizualizer.visualize_lattice(lattice_Sim_object, beam_color_type="radii", deformed_form=True,
+                             enable_boundary_conditions=True)
+
+# Export the results to Paraview
+export_results = exportSimulationResults(simulation_lattice, name_file)
+export_results.export_displacement_rotation()
+export_results.export_finalize()
 ```
 
 ### Homogenization Analysis
 Compute effective material properties of a lattice unit cell:
 
 ```python
-from pyLattice.plotting_lattice import LatticePlotting
 from pyLatticeSim.lattice_sim import LatticeSim
 from pyLatticeSim.utils import create_homogenization_figure
 from pyLatticeSim.utils_simulation import get_homogenized_properties
 from pyLatticeSim.export_simulation_results import exportSimulationResults
 
-name_file = "simulation/hybrid_cell_homogenization"
-lattice_sim = LatticeSim(name_file, verbose=1)
 
-# Compute homogenized properties
-properties = get_homogenized_properties(lattice_sim)
-print(f"Effective Young's modulus: {properties['E_eff']:.2f} MPa")
+name_file = "simulation/hybrid_cell_simulation"
+
+lattice_object = LatticeSim(name_file)
+
+mat_S_orthotropic, homogenization_analysis = get_homogenized_properties(lattice_object)
+
+create_homogenization_figure(mat_S_orthotropic, save=True, name_file=name_file, plot= False)
+
+# Export simulations to Paraview
+exportData = exportSimulationResults(homogenization_analysis, name_file)
+exportData.export_data_homogenization()
 ```
 
 ---
 
 ## 🚀 Optimization
 
-### Topology Optimization
-Optimize lattice topology for minimum compliance:
+### Optimization of Lattice Structure
+Optimize lattice structure for minimum compliance:
 
 ```python
-from pyLattice.plotting_lattice import LatticePlotting
+from pyLatticeDesign.plotting_lattice import LatticePlotting
 from pyLatticeOpti.lattice_opti import LatticeOpti
 
 name_file = "optimization/optimization_beam_flexion"
-lattice_object = LatticeOpti(name_file, verbose=1, convergence_plotting=True)
 
-# Run optimization
-lattice_object.run_optimization()
+lattice_object = LatticeOpti(name_file, verbose=1, convergence_plotting = True)
 
-# Visualize optimized result
-visualizer = LatticePlotting()
-visualizer.visualize_lattice(lattice_object.get_optimized_lattice())
-```
+lattice_object.optimize_lattice()
 
-### Surrogate Model Generation
-Create surrogate models for predicting lattice properties:
-
-```python
-from pyLattice.lattice import Lattice
-from pyLatticeOpti.surrogate_model_relative_densities import (
-    compute_relative_densities_dataset, 
-    plot_3D_scatter,
-    evaluate_kriging_from_pickle
-)
-
-# Generate dataset
-dataset = compute_relative_densities_dataset("hybrid_cell_parametric")
-
-# Create and visualize surrogate model
-plot_3D_scatter(dataset)
-model = evaluate_kriging_from_pickle("relative_density_model")
+# Visualization optimized lattice
+vizualizer = LatticePlotting()
+vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", enable_boundary_conditions=True)
 ```
 
 ---
@@ -146,19 +149,20 @@ model = evaluate_kriging_from_pickle("relative_density_model")
 Save computed lattices for later use:
 
 ```python
-from pyLattice.lattice import Lattice
-from pyLattice.plotting_lattice import LatticePlotting
+from pyLatticeDesign.lattice import Lattice
+from pyLatticeDesign.plotting_lattice import LatticePlotting
+from pyLatticeDesign.utils import save_lattice_object
 
-# Create and save a lattice
-lattice = Lattice("design/complex_lattice")
-lattice.save_pickle_lattice("my_lattice")
 
-# Load the saved lattice
-loaded_lattice = Lattice.open_pickle_lattice("my_lattice")
+path = "design/"
+name_file = "L_logo"
 
-# Visualize
-visualizer = LatticePlotting()
-visualizer.visualize_lattice(loaded_lattice)
+lattice_object = Lattice(path + name_file, verbose=1)
+
+save_lattice_object(lattice_object, name_file + "_saved")
+
+vizualizer = LatticePlotting()
+vizualizer.visualize_lattice(lattice_object, beam_color_type="radii")
 ```
 
 ---
@@ -185,13 +189,7 @@ Define custom lattice unit cells using JSON geometry files:
 }
 ```
 
-Use the custom geometry:
-```python
-from pyLattice.lattice import Lattice
-
-# The geometry file should be placed in src/pyLatticeDesign/geometries/
-lattice = Lattice("design/config_with_custom_cell")
-```
+Save the above JSON content in a file named `MyCustomCell.json` inside the `src/pyLatticeDesign/geometries/` directory.
 
 ---
 
@@ -202,33 +200,26 @@ For large-scale simulations using domain decomposition methods:
 
 ```python
 from pyLatticeSim.lattice_sim import LatticeSim
+from pyLatticeDesign.plotting_lattice import LatticePlotting
 
-name_file = "simulation/3PointBending"
+name_file = "simulation/Three_point_bending"
+
 solver_DDM = LatticeSim(name_file, verbose=1, enable_domain_decomposition_solver=True)
 
-# Run simulation with domain decomposition
-result = solver_DDM.solve_with_DDM()
+solver_DDM.solve_DDM()
+
+# Visualization with matplotlib
+vizualizer = LatticePlotting()
+vizualizer.visualize_lattice(solver_DDM, beam_color_type="radii", deformed_form=True, enable_boundary_conditions=True,
+                             domain_decomposition_simulation_plotting=True)
 ```
 
-### Schur Complement Methods
-Use Schur complement methods for efficient substructuring:
-
-```python
-from pyLatticeSim.lattice_sim import LatticeSim
-from pyLatticeSim.utils_simulation import get_schur_complement
-
-name_file = "simulation/hybrid_cell_simulation"
-lattice_sim = LatticeSim(name_file, verbose=1)
-
-# Compute Schur complement
-schur_matrix = get_schur_complement(lattice_sim)
-```
 
 ---
 
 For more examples, check the `examples/` directory in the repository, which contains:
-- **design/**: Basic lattice generation examples
-- **simulation/**: Finite element analysis examples  
-- **optimization/**: Topology and parameter optimization examples
+- **design/**: Lattice structure generation examples
+- **simulation/**: Finite element analysis examples and domain decomposition
+- **optimization/**: Parameter optimization examples
 
 Each example includes a corresponding JSON parameter file and detailed comments explaining the setup and usage.

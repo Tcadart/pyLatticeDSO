@@ -96,7 +96,7 @@ To define your own unit cell geometry:
 }
 ```
 
-Information:
+### Information:
 
 Geometries are defined in a unit cell of size 1x1x1, so the coordinates in the `beams` list should be normalized
 to this unit cell size.

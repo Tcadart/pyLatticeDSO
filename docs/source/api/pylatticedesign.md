@@ -1,4 +1,4 @@
-# API — pyLatticeDesign
+# API — pyLatticeDesignDesign
 
 ## Core modules
 
@@ -6,6 +6,8 @@
     options:
       show_root_heading: true
       members: true
+      special_members: ["__init__","__repr__","__eq__"]
+      exclude_members: ["__weakref__"]
       members_order: source
 
 ::: pyLatticeDesign.cell
@@ -13,7 +15,7 @@
       show_root_heading: true
       members: true
       members_order: source
-  
+
 ::: pyLatticeDesign.beam
     options:
       show_root_heading: true
@@ -57,4 +59,15 @@
       show_root_heading: true
       members: true
       members_order: source
+
+::: pyLatticeDesign.timing
+    options:
+      show_root_heading: true
+      members: true
+      members_order: source
+
+
+
+
+
 

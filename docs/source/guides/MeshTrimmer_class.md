@@ -27,14 +27,23 @@ meshes. Additionally, it allows for cutting lattice beams that intersect with a 
 
 ## 🧱 Class Usage
 
-Typically used in conjunction with the `Lattice` class:
-
 ```python
-from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
-from pyLattice.lattice import Lattice
+from src.pyLatticeDesign.plotting_lattice import LatticePlotting
+from src.pyLatticeDesign.lattice import Lattice
 
-trimmer = MeshTrimmer("example_mesh.stl")
-lattice = Lattice(..., mesh_trimmer=trimmer)
+from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
+
+name_mesh = "CutedBone"  # get from https://anatomytool.org/content/thunthu-3d-model-bones-lower-limb
+mesh_trimmer = MeshTrimmer(name_mesh)
+mesh_trimmer.plot_mesh(zoom = 3)
+
+name_lattice = "design/BCC_trimmed_example"
+lattice_object = Lattice(name_lattice, mesh_trimmer)
+lattice_object.cut_beam_with_mesh_trimmer()
+
+vizualizer = LatticePlotting()
+vizualizer.visualize_lattice(lattice_object, beam_color_type="radii")
+
 ```
 
 ---
@@ -109,28 +118,9 @@ Visualizes the current mesh using `matplotlib` in a 3D view.
 
 ---
 
-
-
-## 🧬 Integration with `Lattice`
-
-When passed to the `Lattice` class via the `mesh_trimmer` argument, `MeshTrimmer` is automatically used during cell generation to:
-
-* Filter out cells not intersecting with the mesh
-* Optionally trim beams based on the geometry
-
-```python
-from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
-from pyLattice.lattice import Lattice
-
-trimmer = MeshTrimmer("example_mesh.stl")
-lattice = Lattice(..., mesh_trimmer=trimmer)
-lattice.cut_beam_with_mesh_trimmer()  # Use the trimmer to cut beams at mesh intersection
-```
----
-
 ## 📁 File Structure Convention
 
-* Mesh files are expected to be stored under a `Mesh/` folder.
+* Mesh files are expected to be stored under a `data/inputs/mesh_file/` folder.
 * STL format is enforced.
 
 ---

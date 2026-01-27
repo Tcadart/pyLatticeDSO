@@ -9,7 +9,7 @@ This document provides a comprehensive reference for all possible JSON input par
 
 ---
 
-## Lattice (Design) Parameters
+## LatticeDesign Parameters
 
 These parameters are used for creating basic lattice structures.
 
@@ -107,7 +107,7 @@ These parameters extend the LatticeSim parameters with optimization-specific set
 
 ## Examples
 
-### Lattice (Design) Example
+### LatticeDesign Example
 ```json
 {
   "geometry": {
@@ -192,11 +192,3 @@ These parameters extend the LatticeSim parameters with optimization-specific set
 - All numeric values should be appropriate for the physical context (e.g., positive values for dimensions)
 - String values for surfaces: "Xmin", "Xmax", "Ymin", "Ymax", "Zmin", "Zmax"
 - String values for DOF: "X", "Y", "Z", "RX", "RY", "RZ"
-
-### Important Note on Gradient Radii Parameter
-
-The code expects `gradient.radii` (plural), although some example files may use `gradient.radius` (singular). For consistency with the code, use `gradient.radii` in your JSON configuration files.
-
-### Note on "suplementary" Spelling
-
-The JSON key is spelled `suplementary` (with one 'p') in the codebase, not `supplementary` (with two 'p's). This documentation reflects the actual implementation.

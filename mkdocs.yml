@@ -50,14 +50,15 @@ nav:
   - Accueil: index.md
   - Guides:
       - Installation: guides/Installation_tutorial.md
-      - Conditions aux limites: guides/Boundary_conditions.md
-      - MeshTrimmer: guides/MeshTrimmer_class.md
-      - Géométries de cellule: guides/cell_geometries.md
       - Exemples: guides/Examples.md
+      - JSON input settings table: guides/JSON_input_parameters.md
+      - Boundary conditions : guides/Boundary_conditions.md
+      - Cell geometry guide: guides/cell_geometries.md
+      - Mesh trimming class: guides/MeshTrimmer_class.md
       - Export Grasshopper: guides/grasshopper_export.md
-      - Déploiement: guides/deploy-instructions.md
+      - Roughness module: guides/Pyrough_compatibility.md
   - Référence API:
-      - pyLattice: api/test.md
+      - pyLattice: api/pylatticedesign.md
       - pyLatticeSim: api/pylatticesim.md
       - pyLatticeOpti: api/pylatticeopti.md
 
