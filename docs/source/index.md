@@ -1,4 +1,4 @@
-![pyLattice_logo](/docs/source/images/pyLattice_logo.png)
+![pyLattice_logo](images/pyLattice_logo.png)
 
 # Welcome to pyLatticeDSO's documentation!
 

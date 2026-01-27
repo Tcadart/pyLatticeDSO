@@ -6,14 +6,11 @@ on:
   pull_request:
     branches: [ master, main ]
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 concurrency:
   group: "pages"
   cancel-in-progress: false
@@ -22,34 +19,34 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install mkdocs mkdocs-material mkdocstrings[python]
-        
-    - name: Build documentation
-      run: |
-        mkdocs build
-        
-    - name: Add .nojekyll file
-      run: |
-        touch site/.nojekyll
-        
-    - name: Setup Pages
-      uses: actions/configure-pages@v4
-      
-    - name: Upload artifact
-      uses: actions/upload-pages-artifact@v3
-      with:
-        path: site
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Installation de MkDocs et ses plugins
+          pip install mkdocs mkdocs-material mkdocstrings[python] mkdocs-include-markdown-plugin
+          # TRÈS IMPORTANT : Installer ton propre package pour que mkdocstrings le trouve
+          pip install -e . 
+
+      - name: Build documentation
+        run: |
+          # Le mode --strict permet de voir immédiatement si un lien est cassé
+          mkdocs build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
 
   deploy:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
@@ -59,6 +56,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-    - name: Deploy to GitHub Pages
-      id: deployment
-      uses: actions/deploy-pages@v4
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
