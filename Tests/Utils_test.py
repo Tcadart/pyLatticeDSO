@@ -4,7 +4,7 @@ import tempfile
 import json
 import os
 from pathlib import Path
-from src.pyLatticeDesign.utils import (
+from pyLatticeDesign.utils import (
     open_lattice_parameters, 
     _validate_inputs_lattice,
     _validate_inputs_cell,
@@ -15,7 +15,7 @@ from src.pyLatticeDesign.utils import (
 def test_open_lattice_parameters():
     """Test opening lattice parameters from JSON file."""
     # Test with existing file
-    params = open_lattice_parameters("design/BCC_cell.json")
+    params = open_lattice_parameters("design/hybrid_cell.json")
     assert isinstance(params, dict)
     assert "geometry" in params
     assert "cell_size" in params["geometry"]

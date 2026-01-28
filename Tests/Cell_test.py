@@ -1,9 +1,9 @@
 """Test module for Cell class functionality."""
 import numpy as np
 import pytest
-from src.pyLatticeDesign.cell import Cell
-from src.pyLatticeDesign.beam import Beam
-from src.pyLatticeDesign.point import Point
+from pyLatticeDesign.cell import Cell
+from pyLatticeDesign.beam import Beam
+from pyLatticeDesign.point import Point
 
 
 @pytest.fixture
