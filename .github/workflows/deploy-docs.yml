@@ -30,14 +30,15 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Installation de MkDocs et ses plugins
-          pip install mkdocs mkdocs-material mkdocstrings[python] mkdocs-include-markdown-plugin
-          # TRÈS IMPORTANT : Installer ton propre package pour que mkdocstrings le trouve
+          pip install mkdocs mkdocs-material mkdocstrings[python] mkdocs-include-markdown-plugin pytest pytest-cov
           pip install -e . 
+
+      - name: Run Tests
+        run: |
+          pytest 
 
       - name: Build documentation
         run: |
-          # Le mode --strict permet de voir immédiatement si un lien est cassé
           mkdocs build
 
       - name: Setup Pages
