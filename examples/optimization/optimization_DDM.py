@@ -1,5 +1,5 @@
 """
-Examples of a simple optimization case.
+Examples of a simple optimization case with the Domain Decomposition Method (DDM) and surrogate models.
 """
 import time
 
@@ -9,11 +9,8 @@ from pyLatticeOpti.lattice_opti import LatticeOpti
 from pyLatticeDesign.utils import save_JSON_to_Grasshopper, save_lattice_object
 
 path = "optimization/"
-# name_file = "optimization_DDM_surrogate"
 # name_file = "Three_point_bending"
-# name_file = "Three_point_bending_adapted"
 name_file = "Cantilever_L_beam"
-# name_file = "Inversion_mechanism"
 
 
 start_time = time.time()
