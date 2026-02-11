@@ -154,27 +154,33 @@ def grad_material_setting(numCellsX, numCellsY, numCellsZ, gradMatProperty: list
         3D list representing the material type_beam in the structure.
     """
     multimat, direction = gradMatProperty
+    print(f"Gradient material setting: multimat={multimat}, direction={direction}")
 
     # Initialize grad_mat based on `multimat` value
     if multimat == -1:  # Random materials
         return [[[random.randint(1, 3) for _ in range(numCellsX)] for _ in range(numCellsY)] for _ in
                 range(numCellsZ)]
 
-    if multimat == 0:  # Single material
+    elif multimat == 0:  # Single material
         return [[[1 for _ in range(numCellsX)] for _ in range(numCellsY)] for _ in range(numCellsZ)]
 
-    if multimat == 1:  # Graded materials
+    elif multimat == 1:  # Graded materials
         # Generate gradient based on the direction
         return [
             [
                 [
-                    X if direction == 1 else Y if direction == 2 else Z
+                    (X + 1) if direction == 1 else X if direction != 1 else X
+                    if False else
+                    (Y + 1) if direction == 2 else Y
+                    if direction != 2 else Y
+                    if False else
+                    (Z + 1) if direction == 3 else Z
                     for X in range(numCellsX)
                 ]
                 for Y in range(numCellsY)
             ]
             for Z in range(numCellsZ)
         ]
-
-    # Default case: return an empty grad_mat if no valid `multimat` is provided
-    return []
+    else:
+        # Default case: return an empty grad_mat if no valid `multimat` is provided
+        return []

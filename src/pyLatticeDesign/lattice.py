@@ -269,7 +269,7 @@ class Lattice(object):
         ]
 
         grad_mat_property = [
-            mat_grad.get("type_beam", 0),
+            mat_grad.get("type", 0),
             mat_grad.get("direction", 0)
         ]
 

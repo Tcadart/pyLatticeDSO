@@ -6,15 +6,30 @@
       "z": 1
     },
     "number_of_cells": {
-      "x": 1,
+      "x": 5,
       "y": 1,
-      "z": 1
+      "z": 3
     },
     "radii": [
-      0.1
+      0.05
     ],
     "geom_types": [
-      "BCC"
+      "Hybrid1"
     ]
+  },
+  "gradient": {
+    "cell_dimension": {
+      "rule": "linear",
+      "direction_x": true,
+      "direction_y": false,
+      "direction_z": false,
+      "parameter_x": 1.01,
+      "parameter_y": 0.0,
+      "parameter_z": 0.0
+    },
+    "material": {
+      "type": 1,
+      "direction": 2
+    }
   }
 }

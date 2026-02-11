@@ -534,7 +534,7 @@ def plot_coordinate_system(ax):
     """
     Plot a 3D coordinate system with arrows representing the X, Y, and Z axes.
     """
-    origin = [0, 0, 0]
+    origin = [-0.2, -0.2, -0.2]
     axis_length = 0.8
 
     ax.quiver(*origin, axis_length, 0, 0, color='r', arrow_length_ratio=0.1)

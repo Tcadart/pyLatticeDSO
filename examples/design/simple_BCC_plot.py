@@ -11,4 +11,4 @@ name_lattice = "simple_BCC"
 lattice_object = Lattice(name_file + name_lattice, verbose=1)
 
 vizualizer = LatticePlotting()
-vizualizer.visualize_lattice(lattice_object, beam_color_type="radii", enable_system_coordinates=False)
+vizualizer.visualize_lattice(lattice_object, beam_color_type="material", enable_system_coordinates=True)
