@@ -169,12 +169,9 @@ def grad_material_setting(numCellsX, numCellsY, numCellsZ, gradMatProperty: list
         return [
             [
                 [
-                    (X + 1) if direction == 1 else X if direction != 1 else X
-                    if False else
-                    (Y + 1) if direction == 2 else Y
-                    if direction != 2 else Y
-                    if False else
-                    (Z + 1) if direction == 3 else Z
+                    (X + 1) if direction == 0 else
+                    (Y + 1) if direction == 1 else
+                    (Z + 1)
                     for X in range(numCellsX)
                 ]
                 for Y in range(numCellsY)
