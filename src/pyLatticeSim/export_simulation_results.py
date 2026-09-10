@@ -106,6 +106,12 @@ class exportSimulationResults:
         Moment.name = f"Moment_{case}" if case != 0 else "Moment"
         self.result_to_export.append(Moment)
 
+    def export_beamradii(self):
+        """Export beam radii."""
+        r_field = self.simulation_model.BeamModel.radius
+        r_field.name = "BeamRadii"
+        self.result_to_export.append(r_field)
+
     def export_macro_strain(self, case: int):
         """Export macro strain for a given loading case."""
         _, fem = _import_dolfinx()

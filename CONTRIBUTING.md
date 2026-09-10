@@ -25,7 +25,7 @@ For questions, suggestions, or collaboration opportunities, please contact:
 3. **Install Optional Dependencies** (if needed):
    ```bash
    # For simulation features
-   conda install -c conda-forge fenics-dolfinx dolfinx_mpc
+   conda install -c conda-forge fenics-dolfinx=0.9.0 dolfinx_mpc
    
    # For mesh operations
    conda install -c conda-forge trimesh rtree pyembree libspatialindex
