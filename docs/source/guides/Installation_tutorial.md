@@ -42,7 +42,7 @@ This will install the core dependencies:
 The simulation backend relies on [FEniCSx](https://fenicsproject.org/).
 These packages are not available on PyPI and must be installed via conda-forge:
 ```bash
-conda install -c conda-forge fenics-dolfinx dolfinx_mpc
+conda install -c conda-forge fenics-dolfinx=0.9.0 dolfinx_mpc
 ```
 This will install:
 - `dolfinx`
@@ -69,7 +69,7 @@ This will install:
 ## 5. Optional: Verify Installation
 After installation, test your setup:
 ```bash
-python -c "import pyLattice; print('pyLattice installed successfully')"
+python -c "import pyLatticeDesign, pyLatticeSim, pyLatticeOpti; print('pyLattice installed successfully')"
 ```
 
 To check optional modules:
