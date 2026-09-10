@@ -22,4 +22,5 @@ vizualizer.visualize_lattice(lattice_Sim_object, beam_color_type="radii", deform
 # Export the results to Paraview
 export_results = exportSimulationResults(simulation_lattice, name_file)
 export_results.export_displacement_rotation()
+export_results.export_beamradii()
 export_results.export_finalize()
