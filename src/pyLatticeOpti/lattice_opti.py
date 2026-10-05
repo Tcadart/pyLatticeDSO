@@ -610,14 +610,8 @@ class LatticeOpti(LatticeSim):
 
             displacements = np.array(displacements)
 
-            mean_disp = np.mean(displacements)
-
-            if self.objective_function == "max":
-                objective = -mean_disp
-            elif self.objective_function == "min":
-                objective = mean_disp
-            else:
-                raise ValueError("objective_function must be 'min' or 'max'")
+            # min/max is handled in objective()
+            objective = np.mean(displacements)
 
         elif self.objective_type == "displacement_ratio":
             bd_dict = self.boundary_conditions
@@ -722,7 +716,9 @@ class LatticeOpti(LatticeSim):
             self._simulate_lattice_equilibrium()
 
         g_raw = self.calculate_gradient()
-        g_raw = - g_raw # i don't know why but a negative sign is needed here
+        # objective() returns -J for maximization: apply the same sign to the gradient
+        if self.objective_function == "max":
+            g_raw = -g_raw
         g = self._to_normalized_theta_space(g_raw)
 
         # finite_diff_g = self.finite_difference_gradient(r, eps=1e-2, scheme="central")
@@ -741,178 +737,111 @@ class LatticeOpti(LatticeSim):
     @timing.timeit
     def calculate_gradient(self):
         """
-        Compute d(objective)/d(params) for the current state.
-        - 'compliance': u^T (dS/dr) u (per parameter block).
-        - 'displacement': λ^T (dS/dr) u with adjoint S λ = ∂J/∂u, J = average of |selected DOFs|.
+        Compute dJ/d(params) of J = calculate_objective() for the current DDM state.
+
+        With the condensed equilibrium S(r) u_f = b(r) on the free boundary DOFs, the sensitivity of the
+        objective with respect to a radius r_j of a cell c is:
+        - 'compliance' (C = f^T u):                           dC/dr_j = - u_c^T (dS_c/dr_j) u_c
+        - 'displacement' / 'displacement_ratio' (adjoint):    dJ/dr_j = - lambda_c^T (dS_c/dr_j) u_c
+          with S lambda = dJ/du_f (S is symmetric).
+        u_c is the full boundary displacement of the cell (imposed values included) and lambda_c the
+        adjoint vector restricted to the cell (zero on fixed DOFs). The minus sign comes from
+        d(S^{-1})/dr = -S^{-1} (dS/dr) S^{-1}.
 
         Returns:
         --------
         grad: np.ndarray
-            Gradient vector
+            Gradient vector in the physical parameter space
         """
         if self.objective_type == "compliance":
-            n_params = self.number_parameters
-            grad = np.zeros(n_params, dtype=float)
-            n_geom = len(self.geom_types)
-            opt_type = self.optimization_parameters["type"]
-
-            if opt_type == "unit_cell":
-                for cell in self.cells:
-                    if cell.node_in_order_simulation is None:
-                        cell.define_node_order_to_simulate()
-                    u_cell = np.array(cell.get_displacement_at_nodes(cell.node_in_order_simulation),
-                                      dtype=float).ravel()
-                    for j_local, dS in enumerate(getattr(cell, "schur_complement_gradient", [])):
-                        dF_cell = dS @ u_cell
-                        p_idx = cell.index * n_geom + j_local
-                        grad[p_idx] += float(u_cell @ dF_cell)
-
-            elif opt_type == "constant":
-                hybrid = bool(self.optimization_parameters.get("hybrid", False))
-                if hybrid:
-                    accum = np.zeros(n_geom, dtype=float)
-                    for cell in self.cells:
-                        if cell.node_in_order_simulation is None:
-                            cell.define_node_order_to_simulate()
-                        u_cell = np.array(cell.get_displacement_at_nodes(cell.node_in_order_simulation),
-                                          dtype=float).ravel()
-                        for j_local, dS in enumerate(getattr(cell, "schur_complement_gradient", [])):
-                            accum[j_local] += float(u_cell @ (dS @ u_cell))
-                    grad[:n_geom] = accum
-                else:
-                    total = 0.0
-                    for cell in self.cells:
-                        if cell.node_in_order_simulation is None:
-                            cell.define_node_order_to_simulate()
-                        u_cell = np.array(cell.get_displacement_at_nodes(cell.node_in_order_simulation),
-                                          dtype=float).ravel()
-                        for dS in getattr(cell, "schur_complement_gradient", []):
-                            total += float(u_cell @ (dS @ u_cell))
-                    grad[0] = total
-            elif opt_type == "linear":
-                # Gradient w.r.t. linear field parameters θ = [a (for dirs...), intercept d]
-                # r_cell = a_x*x + a_y*y + a_z*z + d, shared by all geometries in a cell
-                dirs = self.optimization_parameters.get("direction", ["x", "y", "z"])
-                valid_dirs = {"x", "y", "z"}
-                if any(d not in valid_dirs for d in dirs):
-                    raise ValueError(f"Invalid direction in {dirs}; valid are 'x', 'y', 'z'.")
-
-                expected_n = len(dirs) + 1  # + intercept
-                if self.number_parameters != expected_n:
-                    raise ValueError(
-                        f"Mismatch in number of linear parameters: got {self.number_parameters}, expected {expected_n}."
-                    )
-
-                # Rebuild current (denormalized) coefficients to detect clamping activity
-                coeffs = {"x": 0.0, "y": 0.0, "z": 0.0}
-                for i, dkey in enumerate(dirs):
-                    coeffs[dkey] = self.denormalize_optimization_parameters(
-                        [float(self.actual_optimization_parameters[i])]
-                    )[0]
-                d_intercept = self.denormalize_optimization_parameters(
-                    [float(self.actual_optimization_parameters[-1])]
-                )[0]
-
-                tol = 1e-12  # small tolerance to decide if clamping is active
-
-                for cell in self.cells:
-                    if cell.node_in_order_simulation is None:
-                        cell.define_node_order_to_simulate()
-
-                    # Current displacement vector on the cell boundary (full local ordering)
-                    u_cell = np.array(
-                        cell.get_displacement_at_nodes(cell.node_in_order_simulation),
-                        dtype=float
-                    ).ravel()
-
-                    # Sensitivity dC/dr_cell = sum_j u^T (dS_j/dr) u
-                    dC_dr_cell = 0.0
-                    for dS in getattr(cell, "schur_complement_gradient", []):
-                        dC_dr_cell += float(u_cell @ (dS @ u_cell))
-
-                    # Chain rule to linear parameters (ignore contribution if clamped)
-                    cx, cy, cz = cell.center_point
-                    r_unclamped = coeffs["x"] * cx + coeffs["y"] * cy + coeffs["z"] * cz + d_intercept
-                    active = (self.min_radius + tol < r_unclamped < self.max_radius - tol)
-                    if not active:
-                        # When the radius is clamped at a bound, ∂r/∂θ ≈ 0 (no push outside the box)
-                        continue
-
-                    # Accumulate gradient for each coefficient in the order of 'dirs', then intercept
-                    for i, dkey in enumerate(dirs):
-                        axis_val = cx if dkey == "x" else cy if dkey == "y" else cz
-                        grad[i] += dC_dr_cell * axis_val
-                    grad[len(dirs)] += dC_dr_cell  # intercept contribution
-            else:
-                raise NotImplementedError(f"Gradient for optimization type '{opt_type}' not implemented yet.")
-            return grad
-
-        elif self.objective_type == "displacement" or self.objective_type == "displacement_ratio":
-            # --- adjoint branch ---
-            q_free = self._build_displacement_rhs_global()  # size = n_free
-            lam_free = self._solve_adjoint_vector(q_free)  # size = n_free
-
-            n_params = self.number_parameters
-            grad = np.zeros(n_params, dtype=float)
-            n_geom = len(self.geom_types)
-            opt_type = self.optimization_parameters["type"]
-
-            # map from full-position -> index in lam_free
-            _, free_idx = self.get_global_displacement_DDM()
-            free_idx = np.asarray(free_idx, dtype=int)
-            fullpos_to_freepos = {int(fp): i for i, fp in enumerate(free_idx)}
-
-            # walk cells and assemble contributions in the *full* boundary space
-            for cell, amap in zip(self.cells, getattr(self, "_adjoint_map", [])):
-                if cell.node_in_order_simulation is None:
-                    cell.define_node_order_to_simulate()
-
-                # Build Uc_full (length = nb_nodes*6) directly from node.displacement_vector
-                Uc_full_list = []
-                for node in cell.node_in_order_simulation:
-                    Uc_full_list.append(np.asarray(node.displacement_vector, dtype=float))
-                Uc_full = np.concatenate(Uc_full_list) if Uc_full_list else np.zeros(0, dtype=float)
-
-                # Build λ_c_full by scattering lam_free entries into the cell full block
-                lam_c_full = np.zeros(amap["m_full"], dtype=float)
-                base = amap["offset_full"]
-                for j_local in amap["free_local_idx"]:
-                    gpos = base + j_local  # global full position
-                    i_free = fullpos_to_freepos.get(gpos, None)
-                    if i_free is not None:
-                        lam_c_full[j_local] = lam_free[i_free]
-
-                lam_norm = np.linalg.norm(lam_c_full)
-                u_norm = np.linalg.norm(Uc_full)
-                if self._verbose >= 2:
-                    print(f"Cell {cell.index}: ||lam_c_full||={lam_norm:.2e}, ||Uc_full||={u_norm:.2e}")
-
-                # accumulate gradient using the local Schur gradients (defined in the same full space)
-                if opt_type == "unit_cell":
-                    for j_local, dS in enumerate(getattr(cell, "schur_complement_gradient", [])):
-                        contrib = float(lam_c_full @ (dS @ Uc_full))
-                        p_idx = cell.index * n_geom + j_local
-                        grad[p_idx] += contrib
-
-                elif opt_type == "constant":
-                    hybrid = bool(self.optimization_parameters.get("hybrid", False))
-                    if hybrid:
-                        for j_local, dS in enumerate(getattr(cell, "schur_complement_gradient", [])):
-                            grad[j_local] += float(lam_c_full @ (dS @ Uc_full))
-                    else:
-                        total = 0.0
-                        for dS in getattr(cell, "schur_complement_gradient", []):
-                            total += float(lam_c_full @ (dS @ Uc_full))
-                        grad[0] += total
-                else:
-                    raise NotImplementedError(f"Gradient for optimization type '{opt_type}' not implemented yet.")
-
-            return grad
-
-
+            weight_vectors = None  # lambda = u for the compliance (self-adjoint problem)
+        elif self.objective_type in ("displacement", "displacement_ratio"):
+            q_free = self._build_displacement_rhs_global()
+            lam_free = self._solve_adjoint_vector(q_free)
+            lam_ext = np.append(lam_free, 0.0)  # sentinel index free_DOF -> fixed DOF
+            weight_vectors = [lam_ext[cell.ddm_free_index] for cell in self.cells]
         else:
             raise NotImplementedError(
                 "Gradient currently implemented for 'compliance' and 'displacement' objectives only.")
+
+        # Sensitivity of the objective with respect to the radii of each cell: (n_cells, n_geom)
+        cell_sensitivities = []
+        for i_cell, cell in enumerate(self.cells):
+            if cell.node_in_order_simulation is None:
+                cell.define_node_order_to_simulate()
+            u_cell = np.array(cell.get_displacement_at_nodes(cell.node_in_order_simulation), dtype=float).ravel()
+            w_cell = u_cell if weight_vectors is None else weight_vectors[i_cell]
+            cell_sensitivities.append([-float(w_cell @ (dS @ u_cell))
+                                       for dS in getattr(cell, "schur_complement_gradient", [])])
+            if self._verbose >= 2 and weight_vectors is not None:
+                print(f"Cell {cell.index}: ||lambda_c||={np.linalg.norm(w_cell):.2e}, "
+                      f"||u_c||={np.linalg.norm(u_cell):.2e}")
+
+        n_params = self.number_parameters
+        grad = np.zeros(n_params, dtype=float)
+        n_geom = len(self.geom_types)
+        opt_type = self.optimization_parameters["type"]
+
+        if opt_type == "unit_cell":
+            for cell, sens in zip(self.cells, cell_sensitivities):
+                for j_local, value in enumerate(sens):
+                    grad[cell.index * n_geom + j_local] += value
+
+        elif opt_type == "constant":
+            hybrid = bool(self.optimization_parameters.get("hybrid", False))
+            if hybrid:
+                for sens in cell_sensitivities:
+                    for j_local, value in enumerate(sens):
+                        grad[j_local] += value
+            else:
+                grad[0] = sum(sum(sens) for sens in cell_sensitivities)
+
+        elif opt_type == "linear":
+            # Gradient w.r.t. linear field parameters θ = [a (for dirs...), intercept d]
+            # r_cell = a_x*x + a_y*y + a_z*z + d, shared by all geometries in a cell
+            dirs = self.optimization_parameters.get("direction", ["x", "y", "z"])
+            valid_dirs = {"x", "y", "z"}
+            if any(d not in valid_dirs for d in dirs):
+                raise ValueError(f"Invalid direction in {dirs}; valid are 'x', 'y', 'z'.")
+
+            expected_n = len(dirs) + 1  # + intercept
+            if self.number_parameters != expected_n:
+                raise ValueError(
+                    f"Mismatch in number of linear parameters: got {self.number_parameters}, expected {expected_n}."
+                )
+
+            # Rebuild current (denormalized) coefficients to detect clamping activity
+            coeffs = {"x": 0.0, "y": 0.0, "z": 0.0}
+            for i, dkey in enumerate(dirs):
+                coeffs[dkey] = self.denormalize_optimization_parameters(
+                    [float(self.actual_optimization_parameters[i])]
+                )[0]
+            d_intercept = self.denormalize_optimization_parameters(
+                [float(self.actual_optimization_parameters[-1])]
+            )[0]
+
+            tol = 1e-12  # small tolerance to decide if clamping is active
+
+            for cell, sens in zip(self.cells, cell_sensitivities):
+                # Sensitivity dJ/dr_cell = sum_j dJ/dr_j (one radius shared by all geometries)
+                dJ_dr_cell = sum(sens)
+
+                # Chain rule to linear parameters (ignore contribution if clamped)
+                cx, cy, cz = cell.center_point
+                r_unclamped = coeffs["x"] * cx + coeffs["y"] * cy + coeffs["z"] * cz + d_intercept
+                active = (self.min_radius + tol < r_unclamped < self.max_radius - tol)
+                if not active:
+                    # When the radius is clamped at a bound, ∂r/∂θ ≈ 0 (no push outside the box)
+                    continue
+
+                # Accumulate gradient for each coefficient in the order of 'dirs', then intercept
+                for i, dkey in enumerate(dirs):
+                    axis_val = cx if dkey == "x" else cy if dkey == "y" else cz
+                    grad[i] += dJ_dr_cell * axis_val
+                grad[len(dirs)] += dJ_dr_cell  # intercept contribution
+        else:
+            raise NotImplementedError(f"Gradient for optimization type '{opt_type}' not implemented yet.")
+        return grad
 
     @timing.category("optimization")
     @timing.timeit
@@ -1524,77 +1453,41 @@ class LatticeOpti(LatticeSim):
 
     def _build_displacement_rhs_global(self) -> np.ndarray:
         """
-        Assemble q = ∂J/∂u for the displacement-type objectives
-        in the *global FREE boundary-DOF ordering* used by the Schur solve.
+        Assemble q = ∂J/∂u_f, with J = calculate_objective(), in the global free-DOF ordering
+        (node.global_free_DOF_index) used by the Schur solve. Fixed DOFs do not depend on the radii
+        and do not contribute.
 
         Supports:
         ---------
         - objective_type == "displacement":
-            J = mean(|u_k|) over selected nodes/DOFs.
+            J = mean(u_k) over the selected nodes/DOFs.
         - objective_type == "displacement_ratio":
-            J = (u_out + u_in)^2  (forces u_out ≈ -u_in, i.e. inverse mechanism).
+            J = -(u_out * u_in) with u_in, u_out the mean displacements on the load and objective surfaces.
 
-        Also builds a per-cell mapping to recover adjoint components back to each
-        cell block in the *full* (nb_nodes*6) boundary ordering:
-            self._adjoint_map = [
-                {
-                  "offset_full": int,                 # start index of cell block in full concatenation
-                  "m_full": int,                      # block length = nb_nodes*6
-                  "free_local_idx": List[int],        # positions (0..m_full-1) that are free in this cell
-                }, ...
-            ]
+        Returns:
+        --------
+        q: np.ndarray
+            Right-hand side of the adjoint problem (size free_DOF).
         """
-        # --- 1) free-DOF vector and its index map ---
-        x_free, free_idx = self.get_global_displacement_DDM()
-        x_free = np.asarray(x_free, dtype=float)
-        free_idx = np.asarray(free_idx, dtype=int)
-        n_free = x_free.size
-
         dof_map = {"X": 0, "Y": 1, "Z": 2, "RX": 3, "RY": 4, "RZ": 5}
-        q_blocks = []
-        offset_full = 0
-        adjoint_map = []
+        q = np.zeros(self.free_DOF, dtype=float)
 
-        # --- 2) case: standard displacement objective ---
+        def _add_mean_derivative(nodes, comps: list[int], coefficient: float) -> None:
+            """Add coefficient * d(mean of u over nodes x comps)/du to q."""
+            n_terms = len(nodes) * len(comps)
+            if n_terms == 0:
+                return
+            for node in nodes:
+                for k in comps:
+                    gi = node.global_free_DOF_index[k]
+                    if gi is not None:
+                        q[gi] += coefficient / n_terms
+
         if self.objective_type == "displacement":
-            set_nodes = self.find_point_on_lattice_surface(surfaceNames=self.objectif_data["Surface"])
-            target = set(set_nodes)
+            nodes = self.find_point_on_lattice_surface(surfaceNames=self.objectif_data["Surface"])
             comps = [dof_map[d] for d in self.objectif_data["DOF"]]
+            _add_mean_derivative(nodes, comps, 1.0)
 
-            n_terms = 0
-            for cell in self.cells:
-                if cell.node_in_order_simulation is None:
-                    cell.define_node_order_to_simulate()
-
-                nb_nodes = len(cell.node_in_order_simulation)
-                m_full = nb_nodes * 6
-                q_cell = np.zeros(m_full, dtype=float)
-
-                for i_node, node in enumerate(cell.node_in_order_simulation):
-                    if node in target:
-                        for k in comps:
-                            n_terms += 1
-                            val = node.displacement_vector[k]
-                            q_cell[i_node * 6 + k] = np.sign(val)
-
-                free_local_idx = []
-                for i_node, node in enumerate(cell.node_in_order_simulation):
-                    for k in range(6):
-                        if not node.fixed_DOF[k]:
-                            free_local_idx.append(i_node * 6 + k)
-
-                q_blocks.append(q_cell)
-                adjoint_map.append({
-                    "offset_full": offset_full,
-                    "m_full": m_full,
-                    "free_local_idx": free_local_idx,
-                })
-                offset_full += m_full
-
-            if n_terms > 0:
-                q_blocks = [qb / max(1, np.sqrt(n_terms)) for qb in q_blocks]
-
-        # --- 3) case: displacement ratio (inverse mechanism) ---
         elif self.objective_type == "displacement_ratio":
             bd_dict = self.boundary_conditions
             if bd_dict.get("Force", None) is not None:
@@ -1608,55 +1501,17 @@ class LatticeOpti(LatticeSim):
             comps_in = [dof_map[d] for d in bd_dict["Load"]["DOF"]]
             comps_out = [dof_map[d] for d in self.objectif_data["DOF"]]
 
-            # compute mean displacements
             u_in = np.mean([n.displacement_vector[c] for n in nodes_in for c in comps_in])
             u_out = np.mean([n.displacement_vector[c] for n in nodes_out for c in comps_out])
 
-            coeff_out = -u_in
-            coeff_in = -u_out
-
-            for cell in self.cells:
-                if cell.node_in_order_simulation is None:
-                    cell.define_node_order_to_simulate()
-
-                nb_nodes = len(cell.node_in_order_simulation)
-                m_full = nb_nodes * 6
-                q_cell = np.zeros(m_full, dtype=float)
-
-                for i_node, node in enumerate(cell.node_in_order_simulation):
-                    if node in nodes_out:
-                        for k in comps_out:
-                            q_cell[i_node * 6 + k] += coeff_out / len(nodes_out)
-                    if node in nodes_in:
-                        for k in comps_in:
-                            q_cell[i_node * 6 + k] += coeff_in / len(nodes_in)
-
-                free_local_idx = []
-                for i_node, node in enumerate(cell.node_in_order_simulation):
-                    for k in range(6):
-                        if not node.fixed_DOF[k]:
-                            free_local_idx.append(i_node * 6 + k)
-
-                q_blocks.append(q_cell)
-                adjoint_map.append({
-                    "offset_full": offset_full,
-                    "m_full": m_full,
-                    "free_local_idx": free_local_idx,
-                })
-                offset_full += m_full
+            # J = -(u_out * u_in)  =>  dJ/du = -u_in * d(u_out)/du - u_out * d(u_in)/du
+            _add_mean_derivative(nodes_out, comps_out, -u_in)
+            _add_mean_derivative(nodes_in, comps_in, -u_out)
 
         else:
             raise NotImplementedError(f"_build_displacement_rhs_global not implemented for {self.objective_type}")
 
-        # --- 4) concatenate & restrict to free DOFs ---
-        q_full = np.concatenate(q_blocks) if q_blocks else np.zeros(0, dtype=float)
-        q_free = q_full[free_idx]
-
-        if q_free.size != n_free:
-            raise RuntimeError(f"Adjoint RHS size mismatch: got {q_free.size}, expected {n_free}")
-
-        self._adjoint_map = adjoint_map
-        return q_free
+        return q
 
     def _solve_adjoint_vector(self, q: np.ndarray) -> np.ndarray:
         """
