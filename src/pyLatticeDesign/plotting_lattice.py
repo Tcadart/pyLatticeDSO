@@ -713,7 +713,6 @@ class LatticePlotting:
         Create subplots for each geometry in a hybrid lattice structure.
         """
         plt, _mcolors, _L3D, _P3D = self._ensure_matplotlib()
-        import matplotlib.cm as cm
 
         cells = lattice.cells
         if len(cells[0].geom_types) <= 1:
@@ -745,7 +744,7 @@ class LatticePlotting:
                 radius_value = radius[rad] if hasattr(radius, '__len__') else radius
 
                 # Define the colormap and normalize
-                colormap = cm.get_cmap('coolwarm')
+                colormap = plt.get_cmap('coolwarm')
                 radius_norm = (radius_value - rmin) / (rmax - rmin)
                 radius_norm = np.clip(radius_norm, 0.0, 1.0)
                 colorCell = colormap(radius_norm)

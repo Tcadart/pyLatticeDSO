@@ -23,7 +23,7 @@ from pyLatticeSim.conjugate_gradient_solver import conjugate_gradient_solver
 from pyLatticeSim.utils_simulation import solve_FEM_FenicsX
 from pyLatticeOpti.plotting_lattice_optim import OptimizationPlotter
 from pyLatticeSim.lattice_sim import LatticeSim
-from pyLatticeOpti.surrogate_model_relative_densities import _find_path_to_data
+from pyLatticeOpti.surrogate_model_relative_densities import _find_path_to_data, gp_mean_gradient_rbf_pipeline
 
 if TYPE_CHECKING:
     from data.inputs.mesh_file.mesh_trimmer import MeshTrimmer
@@ -443,12 +443,14 @@ class LatticeOpti(LatticeSim):
         """
         if self._verbose >= 1:
             print(Fore.GREEN + "Objective function" + Fore.RESET)
-        print("Parameters:", r)
+        if self._verbose >= 2:
+            print("Parameters:", r)
         self.set_optimization_parameters(r)
         if not self._sim_is_current:
             self._simulate_lattice_equilibrium()
         objective = self.calculate_objective()
-        print("objective", objective)
+        if self._verbose >= 2:
+            print("objective", objective)
         self.denorm_objective = objective
         objectiveNorm = self.normalize_objective(objective)
 
@@ -459,9 +461,9 @@ class LatticeOpti(LatticeSim):
         else:
             raise ValueError("objective_function must be 'min' or 'max'")
 
-        print("Normalized objective", objectiveNorm)
         self.actual_objective = objectiveNorm
-        print("Actual objective", self.actual_objective)
+        if self._verbose >= 1:
+            print("Normalized objective", objectiveNorm)
         return self.actual_objective
 
     def set_optimization_parameters(self, optimization_parameters_actual: list[float]) -> None:
@@ -557,7 +559,8 @@ class LatticeOpti(LatticeSim):
             raise ValueError("Invalid optimization parameters type.")
 
         if self._simulation_type == "DDM":
-            self._update_DDM_after_geometry_change()
+            # Schur complements are only needed by the simulation: updated lazily in _simulate_lattice_equilibrium
+            self._schur_is_current = False
 
     @timing.category("optimization")
     @timing.timeit
@@ -569,6 +572,9 @@ class LatticeOpti(LatticeSim):
         if self._simulation_type == "FEM":
             solve_FEM_FenicsX(self)
         elif self._simulation_type == "DDM":
+            if not getattr(self, "_schur_is_current", False):
+                self._update_DDM_after_geometry_change()
+                self._schur_is_current = True
             self.solve_DDM()
         else:
             raise ValueError("Invalid simulation type for optimization. Choose 'FEM' or 'DDM'.")
@@ -727,7 +733,8 @@ class LatticeOpti(LatticeSim):
 
         # Optionally store for callbacks/plots
         self.actualGradient = g.copy()
-        print("Gradient:", g)
+        if self._verbose >= 2:
+            print("Gradient:", g)
         return g
 
     @timing.category("optimization")
@@ -877,7 +884,8 @@ class LatticeOpti(LatticeSim):
 
                 lam_norm = np.linalg.norm(lam_c_full)
                 u_norm = np.linalg.norm(Uc_full)
-                print(f"Cell {cell.index}: ||lam_c_full||={lam_norm:.2e}, ||Uc_full||={u_norm:.2e}")
+                if self._verbose >= 2:
+                    print(f"Cell {cell.index}: ||lam_c_full||={lam_norm:.2e}, ||Uc_full||={u_norm:.2e}")
 
                 # accumulate gradient using the local Schur gradients (defined in the same full space)
                 if opt_type == "unit_cell":
@@ -1018,7 +1026,8 @@ class LatticeOpti(LatticeSim):
         r: list of float
             List of optimization parameters
         """
-        print(Fore.LIGHTGREEN_EX + "Density constraint function" + Fore.RESET)
+        if self._verbose >= 1:
+            print(Fore.LIGHTGREEN_EX + "Density constraint function" + Fore.RESET)
         self.set_optimization_parameters(r)
         densConstraint = self.get_relative_density_constraint()
         # if self.densConstraintInitial is None:
@@ -1039,7 +1048,8 @@ class LatticeOpti(LatticeSim):
         r: list of float
             List of optimization parameters
         """
-        print(Fore.LIGHTBLUE_EX + "Density constraint gradient function" + Fore.RESET)
+        if self._verbose >= 1:
+            print(Fore.LIGHTBLUE_EX + "Density constraint gradient function" + Fore.RESET)
         self.set_optimization_parameters(r)
         # gradDensConstraint = self.get_relative_density_gradient_kriging()
 
@@ -1047,7 +1057,8 @@ class LatticeOpti(LatticeSim):
             gradDensConstraint = self.get_relative_density_gradient_kriging()
         else:
             gradDensConstraint = self.finite_difference_density_gradient(r, eps=1e-2, scheme="central")
-        print("Density constraint gradient: ", gradDensConstraint)
+        if self._verbose >= 2:
+            print("Density constraint gradient: ", gradDensConstraint)
         # gradDensConstraint = gradDensConstraint/self.densConstraintInitial
         return gradDensConstraint
 
@@ -1076,13 +1087,21 @@ class LatticeOpti(LatticeSim):
         meanRelDens: float
             Mean relative density of the lattice
         """
+        if (not self.relative_density_direct_computation and self._simulation_flag
+                and self.kriging_model_relative_density is not None):
+            # One prediction for all cells (avoids the per-call overhead of sklearn)
+            radii_cells = np.array([cell.radii for cell in self.cells], dtype=float)
+            cellRelDens = np.ravel(self.kriging_model_relative_density.predict(radii_cells))
+            return mean(float(v) for v in cellRelDens)
+
         cellRelDens = []
         for cell in self.cells:
             if self.relative_density_direct_computation:
                 relative_dens = self.generate_mesh_lattice_Gmsh(volume_computation=True, cut_mesh_at_boundary=True,
                                                      save_STL=False, only_relative_density=True,
                                                      cell_index=cell.index)
-                print(f"Cell {cell.index} relative density (direct computation): {relative_dens}")
+                if self._verbose >= 1:
+                    print(f"Cell {cell.index} relative density (direct computation): {relative_dens}")
                 cellRelDens.append(relative_dens)
             elif self._simulation_flag and self.kriging_model_relative_density is not None:
                 cellRelDens.append(cell.get_relative_density_kriging(self.kriging_model_relative_density))
@@ -1129,15 +1148,19 @@ class LatticeOpti(LatticeSim):
             grad = np.zeros(self.number_parameters, dtype=float)
             scale = (self.max_radius - self.min_radius) if self.enable_normalization else 1.0
 
-            for cell in self.cells:
-                g_cell_exact = np.asarray(
-                    cell.get_relative_density_gradient_kriging_exact(
-                        self.kriging_model_relative_density,
-                        self.kriging_model_geometries_types
-                    ),
-                    dtype=float
-                )
+            # Exact gradient of all cells in one batched evaluation
+            geometries_types = self.kriging_model_geometries_types
+            X = np.zeros((n_cells, len(geometries_types)), dtype=float)
+            for i_cell, cell in enumerate(self.cells):
+                for idx, rad in enumerate(cell.radii):
+                    g = cell.geom_types[idx]
+                    if g not in geometries_types:
+                        raise ValueError("Incompatible geometry types between the cell and the kriging model.")
+                    X[i_cell, geometries_types.index(g)] = float(rad)
+            grad_full = np.atleast_2d(gp_mean_gradient_rbf_pipeline(self.kriging_model_relative_density, X))
 
+            for i_cell, cell in enumerate(self.cells):
+                g_cell_exact = np.array([grad_full[i_cell, geometries_types.index(g)] for g in cell.geom_types])
                 if g_cell_exact.size != n_geom:
                     raise ValueError(f"Gradient size mismatch: expected {n_geom}, got {g_cell_exact.size}")
 
@@ -1159,12 +1182,12 @@ class LatticeOpti(LatticeSim):
                 coeffs[dkey] = float(self.initial_parameters[i])
             d_intercept = float(self.initial_parameters[-1])
 
-            for cell in self.cells:
+            grad_cells = self._relative_density_gradient_kriging_cells()
+            for cell, grad_cell in zip(self.cells, grad_cells):
                 cx, cy, cz = cell.center_point
                 value = coeffs["x"] * cx + coeffs["y"] * cy + coeffs["z"] * cz + d_intercept
                 value = max(self.min_radius, min(self.max_radius, value))
-                gradient3Geom = cell.get_relative_density_gradient_kriging(
-                    self.kriging_model_relative_density, self.kriging_model_geometries_types) / numberOfCells
+                gradient3Geom = grad_cell / numberOfCells
                 for i, dkey in enumerate(dirs):
                     grad[i] += gradient3Geom[0] * cx if dkey == "x" else gradient3Geom[1] * cy if dkey == "y" else gradient3Geom[2] * cz
                 grad[-1] += sum(gradient3Geom)
@@ -1176,35 +1199,49 @@ class LatticeOpti(LatticeSim):
             scale = (self.max_radius - self.min_radius) if self.enable_normalization else 1.0
 
             if hybrid:
-                grad = np.zeros(n_geom, dtype=float)
-                for cell in self.cells:
-                    g_cell = np.asarray(
-                        cell.get_relative_density_gradient_kriging(
-                            self.kriging_model_relative_density,
-                            self.kriging_model_geometries_types
-                        ),
-                        dtype=float
-                    )
-                    grad += g_cell
+                grad = np.sum(self._relative_density_gradient_kriging_cells(), axis=0)
                 grad /= n_cells
                 grad *= scale
                 return grad
             else:
-                g_total = 0.0
-                for cell in self.cells:
-                    g_cell = np.asarray(
-                        cell.get_relative_density_gradient_kriging(
-                            self.kriging_model_relative_density,
-                            self.kriging_model_geometries_types
-                        ),
-                        dtype=float
-                    )
-                    g_total += float(np.sum(g_cell))
+                g_total = float(np.sum(self._relative_density_gradient_kriging_cells()))
                 g_total /= n_cells
                 g_total *= scale
                 return np.array([g_total], dtype=float)
         else:
             raise ValueError("Invalid optimization parameters type.")
+
+    @timing.category("optimization")
+    @timing.timeit
+    def _relative_density_gradient_kriging_cells(self) -> np.ndarray:
+        """
+        Finite-difference gradient of the kriging relative density for every cell, with the same scheme as
+        Cell.get_relative_density_gradient_kriging, but with a single prediction call for all cells.
+
+        Returns
+        -------
+        np.ndarray
+            Array (n_cells, n_radii) of the gradient of each cell with respect to its radii.
+        """
+        epsilon = 1e-3
+        geometries_types = self.kriging_model_geometries_types
+        inputs = []
+        for cell in self.cells:
+            for idx, rad in enumerate(cell.radii):
+                if cell.geom_types[idx] not in geometries_types:
+                    print("geometry types in cell", cell.geom_types, " Not in the trained kriging model",
+                          geometries_types)
+                    raise ValueError("Incompatible geometry types between the cell and the kriging model.")
+                geom_index = geometries_types.index(cell.geom_types[idx])
+                perturbed_radii = np.zeros(len(geometries_types))
+                radii = np.zeros(len(geometries_types))
+                perturbed_radii[geom_index] = rad + epsilon
+                radii[geom_index] = rad
+                inputs.append(perturbed_radii)
+                inputs.append(radii)
+        prediction = np.ravel(self.kriging_model_relative_density.predict(np.array(inputs)))
+        grad = (prediction[0::2] - prediction[1::2]) / epsilon
+        return grad.reshape(len(self.cells), -1)
 
     @timing.category("optimization")
     @timing.timeit
@@ -1328,7 +1365,8 @@ class LatticeOpti(LatticeSim):
             if s == 0.0:
                 s = 1.0  # robust fallback
             self.initial_value_objective = s
-            print("Initial objective value (scale): ", self.initial_value_objective)
+            if self._verbose >= 1:
+                print("Initial objective value (scale): ", self.initial_value_objective)
 
     def normalize_objective(self, value: float) -> float:
         """
@@ -1638,11 +1676,14 @@ class LatticeOpti(LatticeSim):
 
         n = q.size
 
-        def matvec(v: np.ndarray) -> np.ndarray:
-            return self.calculate_reaction_force_global(v)
+        if self.type_schur_complement_computation == "FE2":
+            matvec = self.calculate_reaction_force_global
+        else:
+            matvec = self._schur_matvec  # DOF maps and preconditioner are those of the last solve_DDM
 
         Sop = LinearOperator((n, n), matvec=matvec, dtype=float)
-        lam, info = conjugate_gradient_solver(Sop, q, tol=1e-10, maxiter=2000)
+        lam, info = conjugate_gradient_solver(Sop, q, M=self.preconditioner, tol=1e-10, maxiter=2000,
+                                              verbose=self._verbose)
         if info != 0 and self._verbose > 0:
             print(Fore.YELLOW + f"Warning: adjoint CG did not fully converge (info={info})." + Fore.RESET)
         return lam
@@ -1680,10 +1721,10 @@ class LatticeOpti(LatticeSim):
         Callback function for the optimization (Printing and plotting)
         """
         self.iteration += 1
-        print(f"[Itération {self.iteration}] Objective : {self.actual_objective}")
-
-        if "relative_density" in self.constraints_dict:
-            print("Relative density = ", self.get_relative_density())
+        if self._verbose >= 1:
+            print(f"[Itération {self.iteration}] Objective : {self.actual_objective}")
+            if "relative_density" in self.constraints_dict:
+                print("Relative density = ", self.get_relative_density())
 
         if self._convergence_plotting:
             if self.plotter is None:

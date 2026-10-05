@@ -20,8 +20,9 @@ def conjugate_gradient_solver(
     tol=1e-5,
     mintol=1e-5,
     restart_every=1000,
-    alpha_max=0.1,
-    callback=None
+    alpha_max=None,
+    callback=None,
+    verbose=0
 ):
     """
     Solve the system Ax = b using the Conjugate Gradient method.
@@ -50,10 +51,14 @@ def conjugate_gradient_solver(
         Number of iterations after which to restart the search direction (default is 5).
 
     alpha_max : float, optional
-        Maximum step size for the search direction (default is 1).
+        Maximum step size for the search direction (default is None: no clipping).
+        Clipping the step breaks the conjugacy of the search directions and slows down convergence.
 
     callback : callable, optional
         Function to call after each iteration with the current solution.
+
+    verbose : int, optional
+        Print convergence messages if verbose > 0 (default is 0).
     """
 
     # Initialisation
@@ -76,7 +81,8 @@ def conjugate_gradient_solver(
         # print(Fore.RED + "Iteration", k + 1, Style.RESET_ALL)
         Ap = A_operator @ p
         alpha = rz_old / np.dot(p, Ap)
-        alpha = min(alpha, alpha_max)
+        if alpha_max is not None:
+            alpha = min(alpha, alpha_max)
 
         x += alpha * p
         r -= alpha * Ap
@@ -96,17 +102,20 @@ def conjugate_gradient_solver(
 
         if residual_norm <= tol * norm_b:
             info = 0
-            print(Fore.GREEN + "Convergence achieved: norm(r) <= tol * norm(b)" + Style.RESET_ALL)
+            if verbose > 0:
+                print(Fore.GREEN + "Convergence achieved: norm(r) <= tol * norm(b)" + Style.RESET_ALL)
             break
 
         if direction_norm < mintol * (solution_norm + 1e-12):  # Avoid division by 0
             info = 0
-            print(Fore.GREEN + "Convergence achieved: direction norm too small" + Style.RESET_ALL)
+            if verbose > 0:
+                print(Fore.GREEN + "Convergence achieved: direction norm too small" + Style.RESET_ALL)
             break
 
         if alpha < 1e-6:
             info = 2
-            print(Fore.YELLOW + "Warning: step size alpha too small — possible stagnation." + Style.RESET_ALL)
+            if verbose > 0:
+                print(Fore.YELLOW + "Warning: step size alpha too small — possible stagnation." + Style.RESET_ALL)
 
         if M is not None:
             z = M @ r

@@ -10,7 +10,7 @@ import numpy as np
 import ufl
 from ufl import as_vector, dot
 
-from .simulation_base import SimulationBase
+from .simulation_base import SimulationBase, set_direct_lu_solver
 from pyLatticeDesign.timing import timing
 
 def _import_dolfinx_stack():
@@ -270,7 +270,7 @@ class HomogenizedCell(SimulationBase):
                 self._solver = PETSc.KSP().create(self._COMM)
                 self._solver.setOperators(A)
                 self._solver.setType(PETSc.KSP.Type.PREONLY)
-                self._solver.getPC().setType(PETSc.PC.Type.LU)
+                set_direct_lu_solver(self._solver.getPC())
                 self._solver.setFromOptions()
 
     @timing.category("homogenization")

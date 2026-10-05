@@ -80,6 +80,11 @@ def _import_sklearn_neighbors():
 
 NearestNeighbors = _import_sklearn_neighbors()
 
+def _load_npz_in_memory(path: Path) -> dict:
+    """Load every array of a .npz file at once (NpzFile decompresses the entry on every key access)."""
+    with np.load(path, allow_pickle=True) as data:
+        return {key: data[key] for key in data.files}
+
 class LatticeSim(Lattice):
     def __init__(self, name_file: str, mesh_trimmer: "MeshTrimmer" = None, verbose: int = 0,
                  enable_domain_decomposition_solver: bool = False):
@@ -185,6 +190,7 @@ class LatticeSim(Lattice):
             if self.type_schur_complement_computation not in ["exact", "FE2"]:
                 self.reduce_basis_dict = load_reduced_basis(self, self.precision_greedy)
                 self.alpha_coefficients_greedy = self.reduce_basis_dict["alpha_ortho"].T
+            self._schur_cache = None  # simulation parameters may have changed
             self.calculate_schur_complement_cells()
             self.preconditioner = None
             self.iteration = 0
@@ -197,6 +203,22 @@ class LatticeSim(Lattice):
             nodes,
             key=lambda n: (round(n.x, ndigits), round(n.y, ndigits), round(n.z, ndigits), getattr(n, "index", -1)),
         )
+
+    def _get_sorted_cell_nodes(self, cell: "Cell") -> list:
+        """
+        Cached deterministic ordering of the nodes of a cell.
+        The cache is invalidated when the node structure changes (see _invalidate_sorted_nodes_cache)
+        or when the number of nodes of the cell changes.
+        """
+        cache = self.__dict__.setdefault("_sorted_nodes_cache", {})
+        entry = cache.get(id(cell))
+        if entry is None or entry[0] is not cell or entry[1] != len(cell.points_cell):
+            entry = (cell, len(cell.points_cell), self._sorted_nodes(cell.points_cell))
+            cache[id(cell)] = entry
+        return entry[2]
+
+    def _invalidate_sorted_nodes_cache(self) -> None:
+        self._sorted_nodes_cache = {}
 
     def define_simulation_parameters(self, name_file: str):
         """
@@ -304,8 +326,10 @@ class LatticeSim(Lattice):
 
         # Update index
         self.define_beam_node_index()
+        self._invalidate_sorted_nodes_cache()
         self.is_penalized = True
-        print(Fore.GREEN + "Lattice penalization applied to beams at nodes." + Style.RESET_ALL)
+        if self._verbose > 0:
+            print(Fore.GREEN + "Lattice penalization applied to beams at nodes." + Style.RESET_ALL)
 
 
     @timing.category("simulation")
@@ -395,8 +419,10 @@ class LatticeSim(Lattice):
 
         self._refresh_nodes_and_beams()
         self.define_beam_node_index()
+        self._invalidate_sorted_nodes_cache()
         self.is_penalized = False
-        print(Fore.GREEN + "Lattice penalization reverted." + Style.RESET_ALL)
+        if self._verbose > 0:
+            print(Fore.GREEN + "Lattice penalization reverted." + Style.RESET_ALL)
 
 # =============================================================================
 # SECTION: Boundary condition Methods
@@ -521,7 +547,7 @@ class LatticeSim(Lattice):
         globalDisplacementIndex = []
         processed_nodes = set()
         for cell in self.cells:
-            for node in self._sorted_nodes(cell.points_cell):
+            for node in self._get_sorted_cell_nodes(cell):
                 if node.index_boundary is not None and node.index_boundary not in processed_nodes:
                     for i in range(6):
                         if node.fixed_DOF[i] == 0 and not OnlyImposed:
@@ -547,6 +573,7 @@ class LatticeSim(Lattice):
         """
         Define boundary tag for all boundary nodes and calculate the total number of boundary nodes
         """
+        self._invalidate_sorted_nodes_cache()
         IndexCounter = 0
         nodeAlreadyIndexed = {}
         self.max_index_boundary = 0
@@ -794,7 +821,8 @@ class LatticeSim(Lattice):
         # ---- ND general case ----
         # Cache interpolators to avoid rebuilding every call
         if not hasattr(self, "_alpha_lin_nd") or not hasattr(self, "_alpha_nn_nd"):
-            print(evalParams.shape, alphaCoeffs.shape)
+            if self._verbose > 1:
+                print(evalParams.shape, alphaCoeffs.shape)
             self._alpha_lin_nd = LinearNDInterpolator(evalParams, alphaCoeffs)  # NaN outside hull
             self._alpha_nn_nd = NearestNDInterpolator(evalParams, alphaCoeffs)  # nearest neighbor fallback
 
@@ -847,27 +875,32 @@ class LatticeSim(Lattice):
         """
         Calculate the Schur complement for each cell in the lattice.
         Batch all unique radius cases per geometry and compute them at once.
+        Results are kept in a bounded cache (self._schur_cache) shared between calls, so that
+        configurations already visited by the optimizer are not recomputed.
         """
-        schur_cache: dict = {}
+        from collections import OrderedDict
+
+        schur_cache = self.__dict__.get("_schur_cache")
+        if schur_cache is None:
+            schur_cache = self._schur_cache = OrderedDict()
+        max_cache_size = getattr(self, "schur_cache_max_size", 512)
         nb_computed = 0
+
+        def _is_cached(key) -> bool:
+            entry = schur_cache.get(key)
+            return entry is not None and (not self.enable_gradient_computing or entry["dS"] is not None)
 
         # 1) Group cells by (geom_key, radius_key)
         groups: dict = {}
         for cell in self.cells:
             geom_key = tuple(cell.geom_types) if isinstance(cell.geom_types, list) else cell.geom_types
             radius_key = tuple(round(float(r), 8) for r in cell.radii)
-
-            if geom_key not in groups:
-                groups[geom_key] = {}
-            groups[geom_key].setdefault(radius_key, []).append(cell)
+            groups.setdefault(geom_key, {}).setdefault(radius_key, []).append(cell)
 
         # 2) For each geometry, batch-compute missing Schur complements
         for geom_key, radius_map in groups.items():
-            if geom_key not in schur_cache:
-                schur_cache[geom_key] = {}
-
             # Find which radius sets are not cached yet
-            missing_keys = [rk for rk in radius_map.keys() if rk not in schur_cache[geom_key]]
+            missing_keys = [rk for rk in radius_map.keys() if not _is_cached((geom_key, rk))]
             if missing_keys:
                 # Compute missing Schur complements
                 if self.type_schur_complement_computation in ["exact", "FE2"]:
@@ -880,7 +913,7 @@ class LatticeSim(Lattice):
                         dS_list = None
                         if self.enable_gradient_computing:
                             dS_list = self._compute_schur_gradients(ref_cell, list(rk))
-                        schur_cache[geom_key][rk] = {"S": S, "dS": dS_list}
+                        schur_cache[(geom_key, rk)] = {"S": S, "dS": dS_list}
                         if self._verbose > 1:
                             print(
                                 f"Schur complement (+ grads) computed (exact/FE2) for geom {geom_key} with radii {rk}.")
@@ -890,17 +923,17 @@ class LatticeSim(Lattice):
                     radii_batch = [list(rk) for rk in missing_keys]
                     S_batch = self.get_schur_complement_from_reduced_basis_batch(radii_batch)  # (n_q, n, n)
 
-                    for rk, S in zip(missing_keys, S_batch):
-                        dS_list = None
-                        if self.enable_gradient_computing:
-                            if self.type_schur_complement_computation == "RBF":
-                                dS_list = self._compute_schur_gradients_RBF(list(rk))
-                            else:
-                                # fallback FD for other surrogates
-                                ref_cell = radius_map[rk][0]
-                                dS_list = self._compute_schur_gradients(ref_cell, list(rk))
+                    dS_batch = [None] * len(missing_keys)
+                    if self.enable_gradient_computing:
+                        if self.type_schur_complement_computation == "RBF":
+                            dS_batch = self._compute_schur_gradients_RBF_batch(radii_batch)
+                        else:
+                            # fallback FD for other surrogates
+                            dS_batch = [self._compute_schur_gradients(radius_map[rk][0], list(rk))
+                                        for rk in missing_keys]
 
-                        schur_cache[geom_key][rk] = {"S": S, "dS": dS_list}
+                    for rk, S, dS_list in zip(missing_keys, S_batch, dS_batch):
+                        schur_cache[(geom_key, rk)] = {"S": S, "dS": dS_list}
                         if self._verbose > 1:
                             print(
                                 f"Schur complement (+ grads) computed (batch surrogate) for geom {geom_key} with radii {rk}.")
@@ -909,11 +942,15 @@ class LatticeSim(Lattice):
 
             # 3) Assign cached results to all cells
             for rk, cells in radius_map.items():
-                S = schur_cache[geom_key][rk]["S"]
-                dS_list = schur_cache[geom_key][rk]["dS"]
+                entry = schur_cache[(geom_key, rk)]
+                schur_cache.move_to_end((geom_key, rk))
                 for c in cells:
-                    c.schur_complement = S
-                    c.schur_complement_gradient = dS_list
+                    c.schur_complement = entry["S"]
+                    c.schur_complement_gradient = entry["dS"]
+
+        # Bound the memory used by the cache (least recently used entries are dropped first)
+        while len(schur_cache) > max_cache_size:
+            schur_cache.popitem(last=False)
 
         if self._verbose > 1:
             print("Number of unique Schur complements computed:", nb_computed)
@@ -991,8 +1028,6 @@ class LatticeSim(Lattice):
         schur_complement_approx: np.ndarray
             Approximated Schur complement
         """
-        import time
-        time_schur = time.time()
         # Evaluate alpha coefficients based on the chosen surrogate method
         if self.type_schur_complement_computation == "nearest_neighbor":
             distances, indices = self.neigh_function.kneighbors(np.array(geometric_params).reshape(1, -1))
@@ -1005,15 +1040,12 @@ class LatticeSim(Lattice):
             alphas = self.radial_basis_function.evaluate(np.array(geometric_params).reshape(1, -1)).squeeze()
         else:
             raise NotImplementedError("Not implemented schur complement computation method.")
-        print("Time to get alphas:", time.time() - time_schur)
         # Reconstruct Schur complement
         schur_complement_approx = self.reduce_basis_dict["basis_reduced_ortho"] @ alphas
-        print("Time to get Schur:", time.time() - time_schur)
         if self.shape_schur_complement is None:
             self.shape_schur_complement = int(sqrt(schur_complement_approx.shape[0]))
         schur_complement_approx_reshape = schur_complement_approx.reshape(
             (self.shape_schur_complement, self.shape_schur_complement), order='F')
-        print("Time to get Schur reshaped:", time.time() - time_schur)
 
         return schur_complement_approx_reshape
 
@@ -1081,6 +1113,36 @@ class LatticeSim(Lattice):
 
         return grads_rbf
 
+    def _compute_schur_gradients_RBF_batch(self, radii_batch: list[list[float]]) -> list[list[np.ndarray]]:
+        """
+        Batched version of _compute_schur_gradients_RBF: one GEMM for all queries and all parameters.
+
+        Parameters
+        ----------
+        radii_batch : list[list[float]]
+            Radii of each query (n_q, d).
+
+        Returns
+        -------
+        list[list[np.ndarray]]
+            For each query, the list of dS/dr_j (n_schur, n_schur) for each radius parameter j.
+        """
+        if self.radial_basis_function is None:
+            self._define_radial_basis_functions()
+        Xq = np.asarray(radii_batch, dtype=float)
+        n_q, d = Xq.shape
+        grad_alpha = np.asarray(self.radial_basis_function.gradient(Xq), dtype=float).reshape(n_q, d, -1)  # (n_q, d, m)
+
+        B = np.asarray(self.reduce_basis_dict["basis_reduced_ortho"], float)  # (nS, m)
+        shapeS = self.shape_schur_complement
+        if shapeS is None:
+            shapeS = int(np.sqrt(B.shape[0]))
+            self.shape_schur_complement = shapeS
+
+        dS_flat = B @ grad_alpha.reshape(n_q * d, -1).T  # (nS, n_q * d)
+        return [[dS_flat[:, q * d + j].reshape((shapeS, shapeS), order='F') for j in range(d)]
+                for q in range(n_q)]
+
     def _schur_for_params(self, cell: "Cell", radii_params: list[float]) -> np.ndarray:
         """
         Helper: evaluate the Schur complement for a given set of radii parameters
@@ -1124,9 +1186,10 @@ class LatticeSim(Lattice):
             print(Fore.GREEN + "Free DOF", self.free_DOF, Style.RESET_ALL)
 
         self.set_global_free_DOF_index()
+        self._build_DDM_index_maps()
 
         # Calculate b
-        if self._verbose > -1:
+        if self._verbose > 0:
             print(Fore.GREEN + "Assemble right-hand side" + Style.RESET_ALL)
 
         # Reactions induced by imposed (Dirichlet) displacements on the boundary
@@ -1148,24 +1211,29 @@ class LatticeSim(Lattice):
         # Define the preconditioner
         self.define_preconditioner()
 
-        A_operator = LinearOperator(shape=(self.free_DOF, self.free_DOF),
-                                    matvec=self.calculate_reaction_force_global)
+        # FE2 needs a local FE solve per cell; otherwise use the vectorized Schur matvec
+        if self.type_schur_complement_computation == "FE2":
+            matvec = self.calculate_reaction_force_global
+        else:
+            matvec = self._schur_matvec
+        A_operator = LinearOperator(shape=(self.free_DOF, self.free_DOF), matvec=matvec)
 
-        print(Fore.GREEN + "Conjugate Gradient started."+ Style.RESET_ALL)
+        if self._verbose > 0:
+            print(Fore.GREEN + "Conjugate Gradient started."+ Style.RESET_ALL)
 
         tol = 1e-6
         mintol = 1e-12
         restart_every = 500000
-        alpha_max = 100
         xsol, info = conjugate_gradient_solver(A_operator, b, M = self.preconditioner, maxiter=self.number_iteration_max,
-                                               tol = tol, mintol = mintol, restart_every = restart_every, alpha_max= alpha_max,
-                                               callback=lambda xk: self.cg_progress(xk, b, A_operator))
-        print(f"Conjugate Gradient finished in {time.time() - start_time:.2f} seconds.")
-        if self._verbose > -1:
+                                               tol = tol, mintol = mintol, restart_every = restart_every,
+                                               callback=lambda xk: self.cg_progress(xk, b, A_operator),
+                                               verbose=self._verbose)
+        if self._verbose > 0:
+            print(f"Conjugate Gradient finished in {time.time() - start_time:.2f} seconds.")
             if info == 0:
                 print(Fore.GREEN + "Conjugate Gradient converged."+ Style.RESET_ALL)
-            else:
-                print(Fore.RED + "Conjugate Gradient did not converge."+ Style.RESET_ALL)
+        if info != 0:
+            print(Fore.RED + "Conjugate Gradient did not converge."+ Style.RESET_ALL)
 
         self.update_reaction_force_each_cell(xsol)
 
@@ -1174,6 +1242,54 @@ class LatticeSim(Lattice):
 
         xsol, globalDisplacementIndex = self.get_global_displacement()
         return xsol, info, self.global_displacement_index, b
+
+    @timing.category("simulation")
+    @timing.timeit
+    def _build_DDM_index_maps(self) -> None:
+        """
+        Build, for each cell, the array mapping the local boundary DOFs (in node_in_order_simulation order)
+        to the global free DOF indices. Fixed DOFs are mapped to the sentinel index ``free_DOF``.
+        Must be called after set_global_free_DOF_index().
+        """
+        n_free = self.free_DOF
+        maps = []
+        for cell in self.cells:
+            if cell.node_in_order_simulation is None:
+                cell.define_node_order_to_simulate()
+            nodes = cell.node_in_order_simulation
+            free_index = np.full(6 * len(nodes), n_free, dtype=np.intp)
+            for i_node, node in enumerate(nodes):
+                for i in range(6):
+                    gi = node.global_free_DOF_index[i]
+                    if gi is not None:
+                        free_index[6 * i_node + i] = gi
+            cell.ddm_free_index = free_index
+            maps.append(free_index)
+        # Identifies the DOF numbering, used to know when a cached preconditioner is still valid
+        self._DDM_index_signature = (n_free, hash(np.concatenate(maps).tobytes()) if maps else 0)
+
+    @timing.category("simulation")
+    @timing.timeit
+    def _schur_matvec(self, global_displacement: np.ndarray) -> np.ndarray:
+        """
+        Vectorized product y = (sum_c B_c^T S_c B_c) x on the free DOFs (fixed DOFs taken as zero).
+        Equivalent to calculate_reaction_force_global after _initialize_displacement, without
+        writing displacements and reaction forces on the nodes.
+
+        Parameters:
+        -----------
+        global_displacement: np.ndarray
+            The global displacement vector on free DOFs.
+        """
+        n_free = self.free_DOF
+        x_ext = np.zeros(n_free + 1, dtype=float)
+        x_ext[:n_free] = global_displacement
+        y_ext = np.zeros(n_free + 1, dtype=float)
+        for cell in self.cells:
+            free_index = cell.ddm_free_index
+            # Free indices are unique inside a cell, only the sentinel can be repeated (and is discarded)
+            y_ext[free_index] += cell.schur_complement @ x_ext[free_index]
+        return y_ext[:n_free]
 
     @timing.category("simulation")
     @timing.timeit
@@ -1310,11 +1426,24 @@ class LatticeSim(Lattice):
     @timing.category("preconditioner")
     @timing.timeit
     def _define_preconditioner_approximation(self):
+        self._neigh_preconditioner = None
+        self._preconditioner_cache = None
         path_dataset_schur = Path(__file__).parents[2] / "data" / "outputs" / "schur_complement"
         geom_type_str = "_" + "_".join(str(gt) for gt in self.geom_types)
 
         if self.preconditioner_type == "mean":
-            name_file = Path("Schur_complement_mean" + geom_type_str)
+            path_mean = path_dataset_schur / ("Schur_complement_mean" + geom_type_str + ".npz")
+            if not path_mean.exists():
+                path_full = path_dataset_schur / ("Schur_complement" + geom_type_str + ".npz")
+                if not path_full.exists():
+                    raise FileNotFoundError(f"Schur complement dataset not found: {path_full}. "
+                                            "Build it first to compute the mean preconditioner.")
+                print(Fore.YELLOW + f"Computing mean Schur complement from {path_full.name}" + Style.RESET_ALL)
+                full_dataset = np.load(path_full, allow_pickle=True)
+                np.savez(path_mean, schur_matrices=np.mean(full_dataset["schur_matrices"], axis=0))
+                print(Fore.GREEN + f"Mean Schur complement saved to {path_mean}" + Style.RESET_ALL)
+            self.used_schur_preconditioner = _load_npz_in_memory(path_mean)
+            return
         elif self.preconditioner_type == "nearest_reference":
             name_file = Path("Schur_complement" + geom_type_str)
         elif self.preconditioner_type == "exact":
@@ -1326,7 +1455,7 @@ class LatticeSim(Lattice):
             name_file = name_file.with_suffix(".npz")
 
         path_file = path_dataset_schur / name_file
-        self.used_schur_preconditioner = np.load(path_file, allow_pickle=True)
+        self.used_schur_preconditioner = _load_npz_in_memory(path_file)
 
     @timing.category("preconditioner")
     @timing.timeit
@@ -1351,67 +1480,88 @@ class LatticeSim(Lattice):
     def build_preconditioner(self):
         """
         Build a sparse LU/ILU preconditioner of the global Schur complement.
-        Faster assembly by accumulating triplets and avoiding dense ops.
+        The global matrix is assembled directly from the local DOF maps of each cell.
+        For "mean" and "nearest_reference" preconditioners, the factorization is reused as long as
+        the selected reference matrices and the DOF numbering do not change.
         """
-        print(Fore.GREEN + "Build the preconditioner" + Style.RESET_ALL)
-        self.build_coupling_operator_cells()
-
-        # Fast assembly via triplet accumulation
-        rows_acc, cols_acc, data_acc = [], [], []
+        if self._verbose > 0:
+            print(Fore.GREEN + "Build the preconditioner" + Style.RESET_ALL)
         n = self.free_DOF
-        if not self.preconditioner_type in ["mean", "nearest_reference"]:
-            print(Fore.YELLOW + "Preconditioner exact is used." + Style.RESET_ALL)
 
-        neigh = None
-        if self.preconditioner_type == "nearest_reference":
-            neigh = NearestNeighbors(n_neighbors=1, algorithm='auto')
-            neigh.fit(self.used_schur_preconditioner["radius_values"])
+        if self.preconditioner_type == "mean":
+            mean_schur = self.used_schur_preconditioner["schur_matrices"]
+            schur_per_cell = [mean_schur] * len(self.cells)
+            cache_key = ("mean",)
+        elif self.preconditioner_type == "nearest_reference":
+            if getattr(self, "_neigh_preconditioner", None) is None:
+                self._neigh_preconditioner = NearestNeighbors(n_neighbors=1, algorithm='auto')
+                self._neigh_preconditioner.fit(self.used_schur_preconditioner["radius_values"])
+            _, nearest = self._neigh_preconditioner.kneighbors(np.array([cell.radii for cell in self.cells]))
+            nearest = nearest[:, 0]
+            reference_schur = self.used_schur_preconditioner["schur_matrices"]
+            schur_per_cell = [reference_schur[i] for i in nearest]
+            cache_key = ("nearest_reference", tuple(int(i) for i in nearest))
+        else:
+            if self._verbose > 0:
+                print(Fore.YELLOW + "Preconditioner exact is used." + Style.RESET_ALL)
+            schur_per_cell = [cell.schur_complement for cell in self.cells]
+            cache_key = None
 
-        for cell in self.cells:
-            if self.preconditioner_type == "mean":
-                schur_matrices = self.used_schur_preconditioner["schur_matrices"]
-            elif self.preconditioner_type == "nearest_reference":
-                _, radii_nearest = neigh.kneighbors(np.array(cell.radii).reshape(1, -1))
-                schur_matrices = self.used_schur_preconditioner["schur_matrices"][radii_nearest[0][0]]
-            else:
-                schur_matrices = cell.schur_complement
+        full_key = (cache_key, self._DDM_index_signature)
+        cached = getattr(self, "_preconditioner_cache", None)
+        if cache_key is not None and cached is not None and cached[0] == full_key:
+            return cached[1], None
 
-            local = cell.build_local_preconditioner(schur_matrices).tocoo()
-            rows_acc.append(local.row)
-            cols_acc.append(local.col)
-            data_acc.append(local.data)
+        # Assembly via triplet accumulation
+        rows_acc, cols_acc, data_acc = [], [], []
+        for cell, schur in zip(self.cells, schur_per_cell):
+            free_index = cell.ddm_free_index
+            schur = np.asarray(schur, dtype=float)
+            if schur.shape[0] != free_index.size:
+                raise ValueError(f"Incompatible dimensions between the cell DOF map ({free_index.size}) "
+                                 f"and the Schur matrix {schur.shape}.")
+            local_free = np.flatnonzero(free_index < n)
+            if local_free.size == 0:
+                continue
+            global_free = free_index[local_free]
+            block = schur[np.ix_(local_free, local_free)]
+            rows_acc.append(np.repeat(global_free, global_free.size))
+            cols_acc.append(np.tile(global_free, global_free.size))
+            data_acc.append(block.ravel())
 
         if rows_acc:
             rows_all = np.concatenate(rows_acc)
             cols_all = np.concatenate(cols_acc)
             data_all = np.concatenate(data_acc)
+            non_zero = data_all != 0.0
+            rows_all, cols_all, data_all = rows_all[non_zero], cols_all[non_zero], data_all[non_zero]
         else:
-            rows_all = cols_all = data_all = np.array([], dtype=int)
+            rows_all = cols_all = np.array([], dtype=int)
+            data_all = np.array([], dtype=float)
 
-        global_schur_complement = coo_matrix((data_all, (rows_all, cols_all)), shape=(n, n))
-        global_schur_complement.sum_duplicates()
+        global_schur_complement = coo_matrix((data_all, (rows_all, cols_all)), shape=(n, n)).tocsc()
 
         # Sanity checks
-        csr_g = global_schur_complement.tocsr()
-        zero_row_mask = np.diff(csr_g.indptr) == 0
-        if np.any(zero_row_mask):
+        zero_col_mask = np.diff(global_schur_complement.indptr) == 0
+        if np.any(zero_col_mask):
             print("Attention : There are some rows with all zeros in the Schur complement matrix.")
 
         # Factorization
         inverseSchurComplement = None
 
         try:
-            LUSchurComplement = splu(global_schur_complement.tocsc())
+            LUSchurComplement = splu(global_schur_complement)
             if self._verbose > 0:
                 print("Using LU decomposition of the Schur complement matrix.")
         except RuntimeError:
             # If exact LU fails or is too ill-conditioned, try an ILU preconditioner
             # Adjust drop_tol/fill_factor if needed for robustness vs. speed.
-            ilu = spilu(global_schur_complement.tocsc(), drop_tol=1e-4, fill_factor=10)
+            ilu = spilu(global_schur_complement, drop_tol=1e-4, fill_factor=10)
             LUSchurComplement = ilu  # returns an object with solve() as well
             if self._verbose > 0:
                 print("Using ILU (spilu) preconditioner for the Schur complement matrix.")
 
+        self._preconditioner_cache = (full_key, LUSchurComplement) if cache_key is not None else None
         return LUSchurComplement, inverseSchurComplement
 
     # =============================================================================

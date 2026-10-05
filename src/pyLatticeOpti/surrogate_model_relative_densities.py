@@ -403,7 +403,7 @@ def plot_3D_iso_surface(lattice_cell=None, name_dataset=None, n_levels = 10):
     fig = plt.figure(figsize=(9, 7))
     ax = fig.add_subplot(111, projection="3d")
     norm = colors.Normalize(vmin=vmin, vmax=vmax)
-    cmap = cm.get_cmap("viridis")
+    cmap = plt.get_cmap("viridis")
 
     for iso in levels:
         verts, faces, _, _ = marching_cubes(grid_vol, level=iso, spacing=(dx, dy, dz))
@@ -887,7 +887,8 @@ def gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
       - (ConstantKernel * RBF) + WhiteKernel
       - RBF + WhiteKernel
 
-    Returns dmu/dx in ORIGINAL (unscaled) space.
+    Returns dmu/dx in ORIGINAL (unscaled) space: shape (d,) for a single point x_row of shape (d,),
+    or (M, d) for a batch of points of shape (M, d).
     """
     import numpy as np
     from sklearn.pipeline import Pipeline
@@ -913,8 +914,9 @@ def gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
         raise ValueError("Model must be a sklearn Pipeline or a GaussianProcessRegressor.")
 
     # --- Point in original space -> (optionally) scaled space ---
-    x_row = np.asarray(x_row, dtype=float).reshape(1, -1)
-    x_s = scaler.transform(x_row).reshape(-1) if scaler is not None else x_row.reshape(-1)
+    single_point = np.ndim(x_row) == 1
+    X_rows = np.atleast_2d(np.asarray(x_row, dtype=float))   # (M, d)
+    x_s = scaler.transform(X_rows) if scaler is not None else X_rows
 
     Xs = gpr.X_train_               # (n_train, d) in the space GPR was fit on
     alpha = gpr.alpha_.reshape(-1)  # (n_train,)
@@ -963,12 +965,12 @@ def gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
     ell2 = length_scale**2  # (d,)
 
     # --- Compute k(x, Xi) and gradient in the space GPR was fit on ---
-    diff = Xs - x_s                                # (n_train, d)
-    sq_maha = np.sum((diff**2) / ell2, axis=1)     # (n_train,)
-    k_vec = const_val * np.exp(-0.5 * sq_maha)     # (n_train,)
+    diff = Xs[None, :, :] - x_s[:, None, :]        # (M, n_train, d)
+    sq_maha = np.sum((diff**2) / ell2, axis=2)     # (M, n_train)
+    k_vec = const_val * np.exp(-0.5 * sq_maha)     # (M, n_train)
 
     # ∂k_i/∂x_j = k_i * (Xi_j - x_j) / ell_j^2
-    dmu_dx_scaled = ((diff / ell2) * k_vec[:, None]).T @ alpha  # (d,)
+    dmu_dx_scaled = np.einsum('mnd,mn,n->md', diff / ell2, k_vec, alpha)  # (M, d)
 
     # --- Chain rule back to original input space if a StandardScaler was used ---
     if scaler is not None:
@@ -984,4 +986,4 @@ def gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
         # y_std is scalar for single-output GPR
         dmu_dx = dmu_dx * float(np.squeeze(y_std))
 
-    return dmu_dx
+    return dmu_dx[0] if single_point else dmu_dx

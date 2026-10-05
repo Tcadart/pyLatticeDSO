@@ -7,6 +7,7 @@ from collections import defaultdict
 from functools import wraps
 import threading
 import inspect
+import time
 from typing import Callable, Iterable, Optional
 
 # Top-level factory so pickle can find it (no lambdas inside __init__)
@@ -27,6 +28,8 @@ class Timing:
         self.func_category = {}                          # qualified_name -> category string
         self._first_start = None
         self._last_end = None
+        self.enabled = True                              # set to False to bypass timing entirely
+        self._name_cache = {}                            # (func, type of first arg) -> qualified_name
 
     # --------------------------- pickle support --------------------------- #
     def __getstate__(self):
@@ -37,6 +40,8 @@ class Timing:
     def __setstate__(self, state):
         self.__dict__.update(state)
         self.local = threading.local()
+        self.__dict__.setdefault("enabled", True)
+        self._name_cache = {}
         if not isinstance(self.timings, defaultdict):
             self.timings = defaultdict(list, self.timings)
         if not isinstance(self.call_counts, defaultdict):
@@ -89,30 +94,39 @@ class Timing:
         Decorator to time execution and populate timings + call graph.
         """
 
+        perf_counter = time.perf_counter
+
         @wraps(func)
         def wrapper(*args, **kwargs):
-            import time
-            qname = self._qualified_name(func, args)
-            cat = getattr(func, "_timing_category", None)
-            if cat is not None:
-                self.func_category[qname] = cat
+            if not self.enabled:
+                return func(*args, **kwargs)
+            # The qualified name only depends on the function and the type of the first argument
+            cache_key = (func, type(args[0]) if args else None)
+            qname = self._name_cache.get(cache_key)
+            if qname is None:
+                qname = self._qualified_name(func, args)
+                self._name_cache[cache_key] = qname
+                cat = getattr(func, "_timing_category", None)
+                if cat is not None:
+                    self.func_category[qname] = cat
 
-            parent = self.call_stack[-1] if self.call_stack else None
-            self.call_stack.append(qname)
-            start = time.perf_counter()
+            call_stack = self.call_stack
+            parent = call_stack[-1] if call_stack else None
+            call_stack.append(qname)
+            start = perf_counter()
             if self._first_start is None:
                 self._first_start = start
             try:
                 return func(*args, **kwargs)
             finally:
-                end = time.perf_counter()
+                end = perf_counter()
                 self._last_end = end
                 elapsed = end - start
                 self.timings[qname].append(elapsed)
                 self.call_counts[qname] += 1
                 if parent:
                     self.call_graph[parent][qname] += elapsed
-                self.call_stack.pop()
+                call_stack.pop()
 
         return wrapper
 

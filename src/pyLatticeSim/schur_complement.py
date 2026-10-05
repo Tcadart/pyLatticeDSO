@@ -7,7 +7,7 @@
 
 import numpy as np
 
-from .simulation_base import SimulationBase
+from .simulation_base import SimulationBase, set_direct_lu_solver
 from pyLatticeDesign.timing import timing
 
 def _import_dolfinx_fem():
@@ -115,7 +115,7 @@ class SchurComplement(SimulationBase):
         ksp = PETSc.KSP().create()
         ksp.setOperators(K_II)
         ksp.setType('preonly')
-        ksp.getPC().setType('lu')
+        set_direct_lu_solver(ksp.getPC())
         ksp.setFromOptions()
 
         # Solve K_II * U = K_IB

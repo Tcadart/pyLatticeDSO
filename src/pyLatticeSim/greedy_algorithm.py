@@ -207,7 +207,9 @@ def load_reduced_basis(lattice_object_sim: "LatticeSim", tol_greedy: float):
         loading_path = loading_path.with_suffix(".npz")
     if not loading_path.is_file():
         raise FileNotFoundError(f"Reduced basis file not found: {loading_path}")
-    loaded_dict = np.load(loading_path)
+    # Materialize the arrays once: NpzFile decompresses the whole entry on every key access
+    with np.load(loading_path) as data:
+        loaded_dict = {key: data[key] for key in data.files}
     return loaded_dict
 
 

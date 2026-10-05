@@ -32,6 +32,22 @@ def _import_dolfinx_fem_common():
 
 fem, common = _import_dolfinx_fem_common()
 
+
+def set_direct_lu_solver(pc) -> None:
+    """
+    Configure a PETSc PC as a direct LU factorization, using SuperLU_DIST when PETSc provides it
+    (much faster than the native PETSc LU on large beam models).
+
+    Parameters:
+    -----------
+    pc: PETSc.PC
+        Preconditioner of a KSP of type PREONLY.
+    """
+    from petsc4py import PETSc
+    pc.setType(PETSc.PC.Type.LU)
+    if PETSc.Sys.hasExternalPackage("superlu_dist"):
+        pc.setFactorSolverType("superlu_dist")
+
 class SimulationBase:
     """
     Parent class with all utilities to compute simulation in FenicsX
@@ -502,8 +518,7 @@ class SimulationBase:
         ksp = PETSc.KSP().create(self._COMM)
         ksp.setOperators(A)
         ksp.setType(PETSc.KSP.Type.PREONLY)
-        pc = ksp.getPC()
-        pc.setType(PETSc.PC.Type.LU)
+        set_direct_lu_solver(ksp.getPC())
 
         self.u = fem.Function(self._V)
         if self._verbose > 0:
