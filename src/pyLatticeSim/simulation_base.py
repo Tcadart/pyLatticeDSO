@@ -594,8 +594,55 @@ class SimulationBase:
 
     @timing.category("simulation_base")
     @timing.timeit
+    def compute_residual_vector(self, solution: "fem.Function" = None) -> np.ndarray:
+        """
+        Assemble once the residual vector r = K u (action of the stiffness form on the solution).
+        The reaction on a set of DOFs is the sum of the entries of r on these DOFs, which is what the
+        virtual work strategy computes (https://bleyerj.github.io/comet-fenicsx/tips/computing_reactions/computing_reactions.html).
+
+        Parameters:
+        -----------
+        solution : fem.Function, optional
+            The solution function to use for the calculation. If None, uses self.u.
+
+        Returns:
+        --------
+        np.ndarray
+            Residual values on the local DOFs (owned and ghosts) of self._V.
+        """
+        from dolfinx import la
+        if solution is None:
+            solution = self.u
+        residual_vector = fem.assemble_vector(fem.form(action(self._k_form, solution)))
+        residual_vector.scatter_reverse(la.InsertMode.add)
+        residual_vector.scatter_forward()
+        return residual_vector.array.copy()
+
+    def _get_component_dof_coordinates(self, sub: int, comp: int) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Cached coordinates of the DOFs of the subspace V.sub(sub).sub(comp), with the map from the collapsed
+        subspace to the DOF indices of V.
+
+        Returns:
+        --------
+        dof_coords : np.ndarray
+            (n_dofs, gdim) coordinates of the DOFs of the collapsed subspace.
+
+        collapse_map : np.ndarray
+            Index in V of each DOF of the collapsed subspace.
+        """
+        cache = self.__dict__.setdefault("_component_dof_coordinates_cache", {})
+        key = (id(self._V), sub, comp)
+        if key not in cache:
+            Vc, collapse_map = self._V.sub(sub).sub(comp).collapse()
+            dof_coords = Vc.tabulate_dof_coordinates().reshape(-1, self.domain.geometry.dim)
+            cache[key] = (dof_coords, np.asarray(collapse_map, dtype=np.int32))
+        return cache[key]
+
+    @timing.category("simulation_base")
+    @timing.timeit
     def calculate_reaction_force_and_moment_at_position(self, position: np.ndarray, solution: "fem.Function" = None,
-                                                        tol: float = 1e-8):
+                                                        tol: float = 1e-8, residual_vector: np.ndarray = None):
         """
         Same as calculate_reaction_force_and_moment but selects the node by spatial position (x,y,z).
         Avoids locate_dofs_geometrical on subspaces by collapsing subspaces to get dof coords, then
@@ -611,25 +658,22 @@ class SimulationBase:
 
         tol : float, optional
             Tolerance for matching DOF coordinates to the specified position.
+
+        residual_vector : np.ndarray, optional
+            Residual vector from compute_residual_vector(solution). Pass it when computing reactions at many
+            positions to assemble the residual only once.
         """
-        if solution is None:
-            solution = self.u
+        if residual_vector is None:
+            residual_vector = self.compute_residual_vector(solution)
 
         px, py, pz = map(float, position)
 
-        # Residual and virtual work form
-        residual = action(self._k_form, solution)
-        v_reac = fem.Function(self._V)
-        virtual_work_form = fem.form(action(residual, v_reac))
-
-        C = fem.Constant(self.domain, 1.0)
         reaction_forces = []
+        for i in range(6):
+            comp = i % 3
+            sub = 0 if i < 3 else 1  # 0: force dofs (u), 1: moment dofs (rotation)
 
-        def _component_dofs_from_position(sub: int, comp: int) -> np.ndarray:
-            # Collapse subspace to access dof coordinates
-            Vc, collapse_map = self._V.sub(sub).sub(comp).collapse()
-            # Coordinates of dofs on collapsed space
-            dof_coords = Vc.tabulate_dof_coordinates().reshape(-1, self.domain.geometry.dim)
+            dof_coords, collapse_map = self._get_component_dof_coordinates(sub, comp)
             mask = (
                     np.isclose(dof_coords[:, 0], px, atol=tol)
                     & np.isclose(dof_coords[:, 1], py, atol=tol)
@@ -638,24 +682,7 @@ class SimulationBase:
             idx_collapsed = np.flatnonzero(mask)
             if idx_collapsed.size == 0:
                 raise RuntimeError(f"No DOF found for sub={sub}, comp={comp} near point {position} with tol={tol}.")
-            # Map back to indices in the (non-collapsed) subspace
-            dofs_subspace = [collapse_map[idx] for idx in idx_collapsed]
-            return np.asarray(dofs_subspace, dtype=np.int32)
-
-        for i in range(6):
-            comp = i % 3
-            sub = 0 if i < 3 else 1  # 0: force dofs (u), 1: moment dofs (rotation)
-
-            dofs = _component_dofs_from_position(sub, comp)
-            bc = fem.dirichletbc(C, dofs, self._V.sub(sub).sub(comp))
-
-            v_local = v_reac.x.array
-            bc.set(v_local)
-            v_reac.x.array[:] = v_local
-            R = fem.assemble_scalar(virtual_work_form)
-            reaction_forces.append(R)
-
-            v_reac.x.array[:] = 0.0  # reset for next component
+            reaction_forces.append(float(np.sum(residual_vector[collapse_map[idx_collapsed]])))
 
         return reaction_forces
 

@@ -112,11 +112,12 @@ class FullScaleLatticeSimulation(SimulationBase):
         """
         Set reaction force on boundary condition nodes with FEM results.
         """
+        residual_vector = self.compute_residual_vector()  # assembled once for all nodes
         for cell in self.BeamModel.lattice.cells:
             for node in cell.points_cell:
                 if 1 in node.fixed_DOF:
                     RF = self.calculate_reaction_force_and_moment_at_position(
-                        np.array([node.x, node.y, node.z]))
+                        np.array([node.x, node.y, node.z]), residual_vector=residual_vector)
                     node.set_reaction_force(RF)
 
     @timing.category("simulation")
