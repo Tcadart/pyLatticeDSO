@@ -1,0 +1,35 @@
+{
+  "geometry": {
+    "cell_size": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "number_of_cells": {
+      "x": 2,
+      "y": 2,
+      "z": 2
+    },
+    "radii": [0.1],
+    "geom_types": ["BCC"]
+  },
+  "simulation_parameters": {
+    "enable" : false,
+    "material": "VeroClear",
+    "periodicity": false
+  },
+  "boundary_conditions": {
+    "Displacement": {
+      "Fixed" : {
+        "Surface": ["Zmin"],
+        "DOF": ["X", "Y", "Z", "RX", "RY", "RZ"],
+        "Value": [0, 0, 0, 0, 0, 0]
+      },
+      "Compression": {
+        "Surface": ["Zmax"],
+        "DOF": ["X", "Y", "Z", "RX", "RY", "RZ"],
+        "Value": [0, 0, -0.02, 0, 0, 0]
+      }
+    }
+  }
+}

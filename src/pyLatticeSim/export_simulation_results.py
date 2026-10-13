@@ -106,6 +106,25 @@ class exportSimulationResults:
         Moment.name = f"Moment_{case}" if case != 0 else "Moment"
         self.result_to_export.append(Moment)
 
+    def export_solid_displacement(self):
+        """
+        Export the displacement field of a solid simulation (SolidLatticeSimulation), interpolated on the mesh
+        nodes for quadratic elements.
+        """
+        _, fem = _import_dolfinx()
+        u = self.simulation_model.u
+        if u.function_space.element.basix_element.degree != 1:
+            V1 = fem.functionspace(self.simulation_model.domain, ("Lagrange", 1, (3,)))
+            u1 = fem.Function(V1)
+            u1.interpolate(u)
+            u = u1
+        u.name = "Displacement"
+        self.result_to_export.append(u)
+
+    def export_von_mises(self):
+        """Export the von Mises stress of a solid simulation (SolidLatticeSimulation)."""
+        self.result_to_export.append(self.simulation_model.compute_von_mises_stress())
+
     def export_beamradii(self):
         """Export beam radii."""
         r_field = self.simulation_model.BeamModel.radius

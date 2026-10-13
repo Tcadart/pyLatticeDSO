@@ -13,6 +13,8 @@ from mpi4py import MPI
 from .beam_model import *
 from .full_scale_lattice_simulation import *
 from .homogenization_cell import HomogenizedCell
+from .solid_model import SolidModel
+from .solid_lattice_simulation import SolidLatticeSimulation
 
 if TYPE_CHECKING:
     from pyLatticeSim.lattice_sim import LatticeSim
@@ -54,6 +56,50 @@ def solve_FEM_FenicsX(lattice : "LatticeSim"):
     # Get results to return
     xsol, globalDisplacementIndex = lattice.get_global_displacement()
     return xsol, simulationModel
+
+def solve_FEM_solid_FenicsX(lattice: "LatticeSim", mesh_refinement: float = 0.5, element_degree: int = 2,
+                            solver: str = "direct", verbose: int = 1):
+    """
+    Solve the 3D linear elastic problem using FenicsX for a given lattice meshed as a solid (tetrahedra).
+    Boundary conditions are read from the "boundary_conditions" block of the lattice input file.
+
+    Parameters:
+    -----------
+    lattice: LatticeSim
+        The lattice structure to be simulated.
+
+    mesh_refinement: float
+        Refinement factor of the tetrahedral mesh (higher values lead to finer meshes).
+
+    element_degree: int
+        Degree of the Lagrange elements (1: linear, 2: quadratic). Linear tetrahedra are much too stiff in bending:
+        on a BCC lattice, P2 with mesh_refinement=0.5 is within ~2% of the converged stiffness while P1 is still
+        ~5% too stiff with mesh_refinement=1.5.
+
+    solver: str
+        "direct" (LU) or "iterative" (conjugate gradient with algebraic multigrid, for large meshes).
+
+    verbose: int
+        Verbosity level.
+
+    Returns:
+    --------
+    simulationModel: SolidLatticeSimulation
+        The simulation model containing the results of the simulation.
+    """
+    # Generate the solid model and mesh
+    solid_model = SolidModel(MPI.COMM_SELF, lattice=lattice, mesh_refinement=mesh_refinement, verbose=verbose)
+
+    # Define the FE model and apply boundary conditions
+    simulationModel = SolidLatticeSimulation(solid_model, element_degree=element_degree, verbose=verbose)
+    simulationModel.apply_boundary_conditions_from_lattice()
+
+    # Solve the problem
+    simulationModel.solve_problem(solver=solver)
+
+    # Assign results to lattice object
+    simulationModel.set_result_displacement_on_lattice_object()
+    return simulationModel
 
 def solve_FEM_cell(lattice: "LatticeSim", cell):
     """
