@@ -139,13 +139,27 @@ class Material:
 
     @timing.category("materialFEM")
     @timing.timeit
-    def compute_mechanical_properties(self, radius):
-        """Compute mechanical properties based on the beam radius."""
+    def compute_mechanical_properties(self, radius, section_weight=None):
+        """
+        Compute mechanical properties based on the beam radius.
+
+        Parameters
+        ----------
+        radius : fem.Function
+            Radius of the beams (DG0).
+
+        section_weight : fem.Function, optional
+            Factor applied to all the section stiffnesses (DG0), e.g. the share of a beam lying on the boundary of a
+            periodic cell (1/2 on a face, 1/4 on an edge).
+        """
         if self._E is None or self._G is None:
             raise RuntimeError("Material properties must be initialized before computing mechanical properties.")
 
         S = math.pi * radius ** 2
         I = (math.pi * radius ** 4) / 4
+        if section_weight is not None:
+            S = section_weight * S
+            I = section_weight * I
         J = 2 * I  # Torsional inertia
 
         self._ES = self._E * S

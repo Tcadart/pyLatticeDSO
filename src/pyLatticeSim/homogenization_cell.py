@@ -397,13 +397,23 @@ class HomogenizedCell(HomogenizationPostProcessing, SimulationBase):
         # Ensure solver is initialized
         self.initialize_solver()
 
+        from dolfinx.fem import petsc as fem_petsc
         b = self.calculate_BTerm()
+        b.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
+        fem_petsc.set_bc(b, self._bcs)  # the fixed dofs have an identity row in A: their RHS must be the BC value
 
-        # Solve the problem
+        # Solve the problem in the constrained space, then give the slave dofs the value of their masters
+        u_mpc = fem.Function(self._mpc.function_space)
+        self._solver.solve(b, u_mpc.x.petsc_vec)
+        u_mpc.x.scatter_forward()
+        self._mpc.backsubstitution(u_mpc)
+
         self.u = fem.Function(self._V)
-        # x_petsc = fem.create_vector(self.u)
-        self._solver.solve(b, self.u.x.petsc_vec)
-        self.u.x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+        n_local = self.u.x.array.size
+        if u_mpc.x.array.size < n_local:
+            raise RuntimeError("Unexpected layout of the multi-point constraint function space.")
+        self.u.x.array[:] = u_mpc.x.array[:n_local]  # same dof layout, the MPC space only adds ghosts
+        self.u.x.scatter_forward()
 
     @timing.category("homogenization")
     @timing.timeit
@@ -430,9 +440,12 @@ class HomogenizedCell(HomogenizationPostProcessing, SimulationBase):
         Output:
         -------
         MacroStress : matrix[3,3]
-            matrix with macroscopic stress
+            matrix with macroscopic stress (sum of f x r on the boundary nodes divided by the cell volume)
         """
         _, _, common = _import_dolfinx_stack()
+        lattice = self.BeamModel.lattice
+        cell_volume = ((lattice.x_max - lattice.x_min) * (lattice.y_max - lattice.y_min) *
+                       (lattice.z_max - lattice.z_min))
         with common.Timer("Reaction force calculation"):
             self.calculate_generalized_stress(case)
 
@@ -440,7 +453,7 @@ class HomogenizedCell(HomogenizationPostProcessing, SimulationBase):
             for tag in self._boundaryTags:
                 fi, ri = self.calculate_reaction_force(tag, self._u_tot)
                 macroStress += np.kron(np.vstack(fi), ri)
-        return macroStress
+        return macroStress / cell_volume
 
     @timing.category("homogenization")
     @timing.timeit

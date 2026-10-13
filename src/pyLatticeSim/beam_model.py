@@ -64,6 +64,7 @@ class BeamModel:
         self.lattice = None
 
         self.radius = None
+        self.section_weight = None
         self.domain = None
         self._material = None
         self.t = None
@@ -165,6 +166,10 @@ class BeamModel:
             elem = self.markers.find(tag)
             self.radius.x.array[elem] = np.full_like(elem, rad, dtype=np.float64)
 
+        # Share of each element in the model (1 by default, see define_periodic_cell_weights)
+        self.section_weight = fem.Function(V0)
+        self.section_weight.x.array[:] = 1.0
+
     @timing.category("beam_model_definition")
     @timing.timeit
     def define_mechanical_properties(self):
@@ -172,8 +177,35 @@ class BeamModel:
         if self.radius is None:
             raise RuntimeError("Radius must be defined before computing beam properties.")
 
-        self.material.compute_mechanical_properties(self.radius)
+        self.material.compute_mechanical_properties(self.radius, self.section_weight)
         self.calculate_local_coordinate_system()
+
+    @timing.category("beam_model_definition")
+    @timing.timeit
+    def define_periodic_cell_weights(self, tol: float = 1e-6):
+        """
+        Weight the elements lying on the boundary of a periodic unit cell by their share in the cell: a beam in a face
+        of the cell is shared by 2 cells (weight 1/2), a beam on an edge by 4 cells (weight 1/4).
+        Without these weights, the beams on the cell boundary are counted several times in the homogenization.
+
+        Parameters
+        ----------
+        tol : float
+            Relative tolerance to detect the elements on the boundary planes.
+        """
+        lattice = self.lattice
+        mins = np.array([lattice.x_min, lattice.y_min, lattice.z_min], dtype=float)
+        maxs = np.array([lattice.x_max, lattice.y_max, lattice.z_max], dtype=float)
+        atol = tol * float(np.max(maxs - mins))
+
+        # Midpoint of each element (an element on a plane has its midpoint on that plane)
+        dofmap = self.domain.geometry.dofmap
+        midpoints = self.domain.geometry.x[dofmap].mean(axis=1)
+        on_boundary = np.isclose(midpoints, mins, atol=atol) | np.isclose(midpoints, maxs, atol=atol)
+        n_planes = on_boundary.sum(axis=1)
+        self.section_weight.x.array[:len(n_planes)] = 0.5 ** n_planes
+        self.section_weight.x.scatter_forward()
+
 
     @timing.category("beam_model_definition")
     @timing.timeit

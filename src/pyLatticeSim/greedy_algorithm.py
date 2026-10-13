@@ -33,7 +33,7 @@ def _import_scipy_linalg():
 la = _import_scipy_linalg()
 
 def reduce_basis_greedy(schur_complement_dict_to_reduce: dict , tol_greedy: float, file_name: str = None,
-                        verbose: int = 1):
+                        verbose: int = 1, residual_history: list = None):
     """
     Generated a reduced basis with a greedy algorithm from a set of projected fields.
     
@@ -50,6 +50,9 @@ def reduce_basis_greedy(schur_complement_dict_to_reduce: dict , tol_greedy: floa
 
     verbose : int, optional
         Verbosity level for logging information during the process.
+
+    residual_history : list, optional
+        If provided, the relative residual used as stopping criterion is appended to this list at each iteration.
 
     Returns
     -------
@@ -102,7 +105,8 @@ def reduce_basis_greedy(schur_complement_dict_to_reduce: dict , tol_greedy: floa
     projfields = np.stack(projfields).T
 
     diffprojfields = np.copy(projfields, order='A')
-    atol = tol_greedy * la.norm(diffprojfields.T, np.inf)
+    residual_ref = la.norm(diffprojfields.T, np.inf)
+    atol = tol_greedy * residual_ref
     diffnormInf = np.zeros(sizeData)
     cvg = False
     maxiter = sizeData
@@ -119,7 +123,10 @@ def reduce_basis_greedy(schur_complement_dict_to_reduce: dict , tol_greedy: floa
         newcoef = la.blas.dgemv(1., diffprojfields, newvec, trans=1)
         la.blas.dger(-1, newvec, newcoef, a=diffprojfields, overwrite_a=1)
 
-        cvg = True if (la.norm(diffprojfields[:, :].T, np.inf) < atol) else False
+        residual = la.norm(diffprojfields[:, :].T, np.inf)
+        if residual_history is not None:
+            residual_history.append(residual / residual_ref)
+        cvg = True if (residual < atol) else False
         reducedbasis.append(newvec.copy())
         reducedcoef.append(newcoef.copy())
         mainelem.append(sI)
@@ -134,10 +141,9 @@ def reduce_basis_greedy(schur_complement_dict_to_reduce: dict , tol_greedy: floa
 
     basis_reduced_ortho = np.column_stack(reducedbasis) if len(reducedbasis) else np.empty((projfields.shape[0], 0))
     basisF = np.asfortranarray(basis_reduced_ortho, dtype=float)
-    alpha_ortho = np.zeros((basis_reduced_ortho.shape[1], projfields.shape[1]))
-    for S in range(projfields.shape[1]):
-        projfield = np.ravel(matrix_schur[S], order='F')
-        alpha_ortho[:, S] = la.lstsq(basisF, projfield)[0]
+    # Single least-squares solve with all snapshots as right-hand sides
+    fields = np.stack([np.ravel(matrix_schur[S], order='F') for S in range(projfields.shape[1])], axis=1)
+    alpha_ortho = la.lstsq(basisF, fields)[0]
 
     # basis_reduced_ortho = basis_reduced_ortho[:, vsort]
     matP_sorted = matP[np.ix_(vsort, vsort)]

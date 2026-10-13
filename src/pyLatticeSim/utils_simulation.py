@@ -15,6 +15,7 @@ from .full_scale_lattice_simulation import *
 from .homogenization_cell import HomogenizedCell
 from .solid_model import SolidModel
 from .solid_lattice_simulation import SolidLatticeSimulation
+from .solid_homogenization_cell import SolidHomogenizedCell
 
 if TYPE_CHECKING:
     from pyLatticeSim.lattice_sim import LatticeSim
@@ -88,7 +89,9 @@ def solve_FEM_solid_FenicsX(lattice: "LatticeSim", mesh_refinement: float = 0.5,
         The simulation model containing the results of the simulation.
     """
     # Generate the solid model and mesh
-    solid_model = SolidModel(MPI.COMM_SELF, lattice=lattice, mesh_refinement=mesh_refinement, verbose=verbose)
+    # Curved elements (same order as the displacement) follow the cylinders exactly
+    solid_model = SolidModel(MPI.COMM_SELF, lattice=lattice, mesh_refinement=mesh_refinement,
+                             geometry_order=element_degree, verbose=verbose)
 
     # Define the FE model and apply boundary conditions
     simulationModel = SolidLatticeSimulation(solid_model, element_degree=element_degree, verbose=verbose)
@@ -147,6 +150,8 @@ def get_homogenized_properties(lattice: "LatticeSim"):
         raise ValueError("The lattice must contain only one cell for homogenization.")
 
     cell_model = BeamModel(MPI.COMM_SELF, lattice=lattice)
+    # Beams on the faces/edges of the periodic cell are shared with the neighbouring cells
+    cell_model.define_periodic_cell_weights()
 
     # Initialization simulation
     homogenization_analysis = HomogenizedCell(cell_model)
@@ -165,5 +170,51 @@ def get_homogenized_properties(lattice: "LatticeSim"):
     return mat_Sorthotropic, homogenization_analysis
 
 
+def get_homogenized_properties_solid(lattice: "LatticeSim", mesh_refinement: float = 0.5, element_degree: int = 2,
+                                     verbose: int = 1):
+    """
+    Perform homogenization analysis on a lattice unit cell meshed as a 3D solid with a periodic mesh.
 
+    Parameters:
+    -----------
+    lattice: LatticeSim
+        The lattice structure to be homogenized (one single cell with a periodic geometry).
 
+    mesh_refinement: float
+        Refinement factor of the tetrahedral mesh (higher values lead to finer meshes).
+
+    element_degree: int
+        Degree of the Lagrange elements (1: linear, 2: quadratic).
+
+    verbose: int
+        Verbosity level.
+
+    Returns:
+    --------
+    mat_Sorthotropic: numpy.ndarray
+        The homogenized orthotropic compliance matrix.
+
+    homogenization_analysis: SolidHomogenizedCell
+        The homogenization analysis object containing results and methods.
+    """
+    if lattice.get_number_cells() > 1:
+        raise ValueError("The lattice must contain only one cell for homogenization.")
+
+    # Curved elements (same order as the displacement) follow the cylinders exactly: straight tetrahedra approximate
+    # the beam sections by polygons and underestimate the stiffness by a few percent
+    solid_model = SolidModel(MPI.COMM_SELF, lattice=lattice, mesh_refinement=mesh_refinement, periodic_mesh=True,
+                             geometry_order=element_degree, verbose=verbose)
+
+    homogenization_analysis = SolidHomogenizedCell(solid_model, element_degree=element_degree, verbose=verbose)
+    homogenization_analysis.apply_dirichlet_for_homogenization()
+    homogenization_analysis.periodic_boundary_condition()
+
+    homogenization_analysis.solve_full_homogenization()
+
+    if verbose > 0:
+        homogenization_analysis.print_homogenized_matrix()
+        homogenization_analysis.print_errors()
+
+    mat_Sorthotropic = homogenization_analysis.get_S_orthotropic()
+
+    return mat_Sorthotropic, homogenization_analysis

@@ -18,7 +18,7 @@ import gmsh
 import numpy as np
 
 from .cell import *
-from .utils import _validate_inputs_lattice, open_lattice_parameters
+from .utils import _validate_inputs_lattice, open_lattice_parameters, function_penalization_Lzone
 from .gradient_properties import get_grad_settings, grad_material_setting, grad_settings_constant
 from .timing import timing
 
@@ -68,6 +68,7 @@ class Lattice(object):
         self.uncertainty_node = None
         self.eraser_blocks = None
         self.enable_periodicity = False  # Warning not working for graded structures
+        self.penalization_strategy = "angle"  # Length of the penalized beams at nodes (see PENALIZATION_STRATEGIES)
         self.enable_simulation_properties = False
         self._simulation_flag = False
         self._optimization_flag = False
@@ -901,7 +902,7 @@ class Lattice(object):
                         a1_list.append(ang);
                         r1_list.append(nb.radius)
                 ang1, rad1 = _best_by_penalization(a1_list, r1_list)
-                b.set_angle(rad1, ang1, p)
+                b.set_angle(rad1, ang1, p, getattr(self, "penalization_strategy", "angle"))
 
     # =============================================================================
     # SECTION: Utils Methods

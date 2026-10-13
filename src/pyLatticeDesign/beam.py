@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 from .timing import timing
 from .point import Point
-from .utils import function_penalization_Lzone, _discard
+from .utils import penalization_length, _discard
 
 
 class Beam(object):
@@ -363,7 +363,7 @@ class Beam(object):
 
     @timing.category("simulation")
     @timing.timeit
-    def set_angle(self, radius: float, angle: float, point: "Point") -> None:
+    def set_angle(self, radius: float, angle: float, point: "Point", strategy: str = "angle") -> None:
         """
         Assign angle and radius data to one of the beam's endpoints.
 
@@ -377,15 +377,19 @@ class Beam(object):
 
         point : Point
             The point (endpoint) of the beam to which the data is assigned.
+
+        strategy : str
+            Penalization strategy used to compute the length of the penalized zone (see PENALIZATION_STRATEGIES).
         """
+        L_zone = penalization_length(strategy, radius, angle, self.radius, self.get_length())
         if point == self.point1:
             self.angle_point_1["radius"] = radius
             self.angle_point_1["angle"] = angle
-            self.angle_point_1["L_zone"] = function_penalization_Lzone(radius, angle)
+            self.angle_point_1["L_zone"] = L_zone
         elif point == self.point2:
             self.angle_point_2["radius"] = radius
             self.angle_point_2["angle"] = angle
-            self.angle_point_2["L_zone"] = function_penalization_Lzone(radius, angle)
+            self.angle_point_2["L_zone"] = L_zone
         else:
             raise ValueError("The specified point is not an endpoint of the beam.")
 

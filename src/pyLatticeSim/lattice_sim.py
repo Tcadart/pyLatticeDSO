@@ -15,7 +15,7 @@ from colorama import Fore, Style
 from pyLatticeDesign.beam import Beam
 from pyLatticeDesign.cell import Cell
 from pyLatticeDesign.lattice import Lattice
-from pyLatticeDesign.utils import open_lattice_parameters
+from pyLatticeDesign.utils import open_lattice_parameters, PENALIZATION_STRATEGIES
 from pyLatticeSim.greedy_algorithm import load_reduced_basis
 from pyLatticeSim.utils_rbf import ThinPlateSplineRBF
 from pyLatticeSim.utils_schur import get_schur_complement
@@ -115,6 +115,7 @@ class LatticeSim(Lattice):
         self.global_displacement_index = None
         self.n_DOF_per_node: int = 6  # Number of DOF per node (3 translation + 3 rotation)
         self.penalization_coefficient: float = 1.5  # Fixed with previous optimization
+        self.max_penalized_fraction: float = 0.9  # Maximum part of a beam covered by its two penalized zones
         self.surrogate_model_implemented = ["exact", "FE2", "nearest_neighbor", "linear", "RBF"]
         self.enable_gradient_computing = False # Enable gradient computing for optimization
         self.is_penalized = False # True if the lattice has penalized beams at nodes
@@ -235,6 +236,10 @@ class LatticeSim(Lattice):
         self.enable_simulation_properties = bool(sim_params.get("enable", False))
         self.material_name = sim_params.get("material", "VeroClear")
         self.enable_periodicity = sim_params.get("periodicity", False)
+        self.penalization_strategy = sim_params.get("penalization_strategy", "angle")
+        if self.penalization_strategy not in PENALIZATION_STRATEGIES:
+            raise ValueError(f"Unknown penalization strategy '{self.penalization_strategy}'. "
+                             f"Use one of {list(PENALIZATION_STRATEGIES)}.")
         DDM_parameters = sim_params.get("DDM", None)
         if DDM_parameters is not None:
             self.enable_preconditioner = DDM_parameters.get("enable_preconditioner", False)
@@ -269,16 +274,23 @@ class LatticeSim(Lattice):
         Set penalization on beams at nodes based on L_zone values defined at beam endpoints.
         This method allows for better simulation of beam junctions by introducing penalized segments.
         """
+        n_capped = 0
         for cell in self.cells:
             beams_to_remove = []
             beams_to_add = []
             points_to_add = []
             for beam in list(cell.beams_cell):
-                L1 = beam.angle_point_1.get("L_zone", 0)
-                L2 = beam.angle_point_2.get("L_zone", 0)
+                L1 = beam.angle_point_1.get("L_zone", 0) or 0
+                L2 = beam.angle_point_2.get("L_zone", 0) or 0
                 # No modification if both are zero or negative
                 if L1 <= 0 and L2 <= 0:
                     continue
+                # Keep an unmodified middle segment: the two penalized zones must not overlap
+                max_total = getattr(self, "max_penalized_fraction", 0.9) * beam.get_length()
+                if L1 + L2 > max_total:
+                    scale = max_total / (L1 + L2)
+                    L1, L2 = L1 * scale, L2 * scale
+                    n_capped += 1
 
                 # Start from original endpoints
                 start = beam.point1
@@ -328,8 +340,35 @@ class LatticeSim(Lattice):
         self.define_beam_node_index()
         self._invalidate_sorted_nodes_cache()
         self.is_penalized = True
+        if n_capped and self._verbose > 0:
+            print(Fore.YELLOW + f"{n_capped} beams: penalized zones longer than {getattr(self, 'max_penalized_fraction', 0.9):.0%} "
+                                f"of the beam, reduced to keep an unmodified middle segment." + Style.RESET_ALL)
         if self._verbose > 0:
             print(Fore.GREEN + "Lattice penalization applied to beams at nodes." + Style.RESET_ALL)
+
+    @timing.category("simulation")
+    @timing.timeit
+    def set_penalization_strategy(self, strategy: str) -> None:
+        """
+        Change the strategy defining the length of the penalized beams at nodes and penalize the lattice again.
+
+        Parameters
+        ----------
+        strategy : str
+            One of PENALIZATION_STRATEGIES:
+            "angle" (L = r_neighbor / tan(angle / 2), default), "length" (L = beam length / 10),
+            "radius" (L = beam radius), "sqrt3_radius" (L = sqrt(3) * beam radius).
+        """
+        if strategy not in PENALIZATION_STRATEGIES:
+            raise ValueError(f"Unknown penalization strategy '{strategy}'. Use one of {list(PENALIZATION_STRATEGIES)}.")
+        if self.is_penalized:
+            self.reset_penalized_beams()
+        self.penalization_strategy = strategy
+        self.define_connected_beams_for_all_nodes()  # connectivity (with periodic images) used by the angles
+        self.define_angles_between_beams()
+        self.set_penalized_beams()
+        self.define_node_index_boundary()
+        self.define_node_local_tags()
 
 
     @timing.category("simulation")
@@ -375,6 +414,7 @@ class LatticeSim(Lattice):
 
             new_node.connected_beams = _ensure_set(getattr(new_node, "connected_beams", None))
             new_node.connected_beams.add(bmid)
+            bmid.length = bmid.get_length()  # cached length used to place points on the beam and for its volume
 
         for cell in self.cells:
             beams = list(cell.beams_cell)
@@ -1235,10 +1275,11 @@ class LatticeSim(Lattice):
         if info != 0:
             print(Fore.RED + "Conjugate Gradient did not converge."+ Style.RESET_ALL)
 
-        self.update_reaction_force_each_cell(xsol)
-
-        # Reset boundary conditions
+        # Restore the imposed displacements (zeroed by _initialize_displacement) before computing the reactions,
+        # so that they include the contribution of the imposed DOFs
         self.set_boundary_conditions()
+
+        self.update_reaction_force_each_cell(xsol)
 
         xsol, globalDisplacementIndex = self.get_global_displacement()
         return xsol, info, self.global_displacement_index, b

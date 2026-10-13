@@ -458,6 +458,54 @@ def function_penalization_Lzone(radius: float, angle: float) -> float:
         return 0.0
     return radius / math.tan(math.radians(angle) / 2)
 
+PENALIZATION_STRATEGIES = {
+    "angle": "L = r_neighbor / tan(angle / 2) (Cadart et al. 2025)",
+    "length": "L = beam length / 10",
+    "radius": "L = beam radius",
+    "sqrt3_radius": "L = sqrt(3) * beam radius",
+}
+
+
+def penalization_length(strategy: str, radius_neighbor: float, angle: float, beam_radius: float,
+                        beam_length: float) -> float:
+    """
+    Length of the penalized zone at a beam end, for a given penalization strategy.
+
+    Parameters:
+    -----------
+    strategy: str
+        One of PENALIZATION_STRATEGIES.
+
+    radius_neighbor: float
+        Radius of the connected beam selected at the node.
+
+    angle: float
+        Angle in degrees with the connected beam selected at the node (0 if the node has no other beam).
+
+    beam_radius: float
+        Radius of the penalized beam.
+
+    beam_length: float
+        Length of the penalized beam.
+
+    Returns:
+    -----------
+        float: Length of the penalization zone.
+    """
+    if strategy == "angle":
+        return function_penalization_Lzone(radius_neighbor, angle)
+    if strategy not in PENALIZATION_STRATEGIES:
+        raise ValueError(f"Unknown penalization strategy '{strategy}'. Use one of {list(PENALIZATION_STRATEGIES)}.")
+    # No joint at a free end or between quasi-aligned beams (same rule as the angle strategy)
+    if angle == 0.0 or angle > 170:
+        return function_penalization_Lzone(radius_neighbor, angle)
+    if strategy == "length":
+        return beam_length / 10.0
+    if strategy == "radius":
+        return beam_radius
+    return math.sqrt(3.0) * beam_radius
+
+
 def _prepare_lattice_plot_data(beam, deformedForm: bool = False):
     beamDraw = set()
     lines = []

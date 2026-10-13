@@ -56,6 +56,10 @@ class SolidModel:
     min_beam_length : float
         Beams shorter than this length are not meshed.
 
+    geometry_order : int
+        Order of the tetrahedra geometry. 2 gives curved elements that follow the cylinders exactly, while straight
+        tetrahedra (1) approximate the beam sections by polygons and underestimate the stiffness.
+
     periodic_mesh : bool
         If True, the meshes of opposite faces of the bounding box are identical (up to the translation), as required
         by periodic boundary conditions. The lattice geometry itself must be periodic.
@@ -67,9 +71,11 @@ class SolidModel:
     SURFACE_TAGS = {"Xmin": 1, "Xmax": 2, "Ymin": 3, "Ymax": 4, "Zmin": 5, "Zmax": 6}
 
     def __init__(self, COMM, lattice: "LatticeSim", mesh_refinement: float = 1.0, cell_index: int = None,
-                 min_beam_length: float = 1e-6, periodic_mesh: bool = False, verbose: int = 1):
+                 min_beam_length: float = 1e-6, periodic_mesh: bool = False, geometry_order: int = 1,
+                 verbose: int = 1):
         self.COMM = COMM
         self.periodic_mesh = periodic_mesh
+        self.geometry_order = geometry_order
         self._verbose = verbose
         self.lattice = None
         self.domain = None
@@ -140,6 +146,8 @@ class SolidModel:
                     self.set_periodic_surfaces_gmsh()
                 self.lattice.set_mesh_size_gmsh(axes, mesh_refinement=self.mesh_refinement)
                 gmsh.model.mesh.generate(3)
+                if self.geometry_order > 1:
+                    gmsh.model.mesh.setOrder(self.geometry_order)
             self.domain, self.markers, self.facets = gmshio.model_to_mesh(gmsh.model, self.COMM, 0, gdim=3)
         finally:
             gmsh.finalize()
