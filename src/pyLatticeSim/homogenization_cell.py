@@ -57,7 +57,119 @@ def _import_petsc4py():
         return _Missing()
 
 
-class HomogenizedCell(SimulationBase):
+class HomogenizationPostProcessing:
+    """
+    Post-processing of a homogenized stiffness matrix (self.homogenizeMatrix, 6x6 in Voigt notation), shared by the
+    beam (HomogenizedCell) and the solid (SolidHomogenizedCell) homogenizations.
+    """
+
+    # =============================================================================
+    # SECTION: Post-processing methods
+    # =============================================================================
+
+    @timing.category("homogenization")
+    @timing.timeit
+    def print_homogenized_matrix(self):
+        """
+        Print simulation results of 6 loading case
+        """
+        print("Homogenized matrix: ")
+        for row in self.homogenizeMatrix:
+            print(" ".join(f"{val:10.3f}" for val in row))
+
+    @timing.category("homogenization")
+    @timing.timeit
+    def convert_to_orthotropic_form(self):
+        """
+        Convert homogenize matrix to orthotropic form
+        """
+        Hinv = np.linalg.inv(self.homogenizeMatrix)
+        Ex = 1 / Hinv[0, 0]
+        Ey = 1 / Hinv[1, 1]
+        Ez = 1 / Hinv[2, 2]
+        Gxy = 1 / (2 * Hinv[3, 3])
+        Gxz = 1 / (2 * Hinv[4, 4])
+        Gyz = 1 / (2 * Hinv[5, 5])
+        nuxy = -Hinv[0, 1] * Ey
+        nuxz = -Hinv[0, 2] * Ez
+        nuyz = -Hinv[1, 2] * Ez
+
+        # Initialize orthotropic matrix
+        self.orthotropicMatrix = np.zeros_like(self.homogenizeMatrix)
+
+        # Normal stiffness
+        self.orthotropicMatrix[0, 0] = Ex
+        self.orthotropicMatrix[1, 1] = Ey
+        self.orthotropicMatrix[2, 2] = Ez
+        self.orthotropicMatrix[3, 3] = Gxy
+        self.orthotropicMatrix[4, 4] = Gxz
+        self.orthotropicMatrix[5, 5] = Gyz
+
+        # Poisson effects
+        self.orthotropicMatrix[0, 1] = nuxy
+        self.orthotropicMatrix[1, 0] = self.orthotropicMatrix[0, 1]
+        self.orthotropicMatrix[0, 2] = nuxz
+        self.orthotropicMatrix[2, 0] = self.orthotropicMatrix[0, 2]
+        self.orthotropicMatrix[1, 2] = nuyz
+        self.orthotropicMatrix[2, 1] = self.orthotropicMatrix[1, 2]
+
+    @timing.category("homogenization")
+    @timing.timeit
+    def get_S_orthotropic(self):
+        """
+        Return orthotropic matrix
+        """
+        Hinv = np.linalg.inv(self.homogenizeMatrix)
+        Ex = 1 / Hinv[0, 0]
+        Ey = 1 / Hinv[1, 1]
+        Ez = 1 / Hinv[2, 2]
+        Gxy = 1 / (2 * Hinv[3, 3])
+        Gxz = 1 / (2 * Hinv[4, 4])
+        Gyz = 1 / (2 * Hinv[5, 5])
+        nuxy = -Hinv[0, 1] * Ey
+        nuxz = -Hinv[0, 2] * Ez
+        nuyz = -Hinv[1, 2] * Ez
+        matSorthotropic = np.array([
+            [1 / Ex, -nuxy / Ex, -nuxz / Ex, 0.0, 0.0, 0.0],
+            [-nuxy / Ex, 1 / Ey, -nuyz / Ey, 0.0, 0.0, 0.0],
+            [-nuxz / Ex, -nuyz / Ey, 1 / Ez, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1 / Gxy, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1 / Gxz, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 1 / Gyz]])
+        return matSorthotropic
+
+    def print_orthotropic_form(self):
+        """
+        Print orthotropic form of homogenization matrix
+        """
+        print('Ex ', self.orthotropicMatrix[0, 0])
+        print('Ey ', self.orthotropicMatrix[1, 1])
+        print('Ez ', self.orthotropicMatrix[2, 2])
+        print('nuxy ', self.orthotropicMatrix[0, 1])
+        print('nuxz ', self.orthotropicMatrix[0, 2])
+        print('nuyz ', self.orthotropicMatrix[1, 2])
+        print('Gxy ', self.orthotropicMatrix[3, 3])
+        print('Gxz ', self.orthotropicMatrix[4, 4])
+        print('Gyz ', self.orthotropicMatrix[5, 5])
+
+    @timing.category("homogenization")
+    @timing.timeit
+    def compute_errors(self):
+        """
+        Calculate errors
+        """
+        C = self.homogenizeMatrix
+        C_symm = (C + C.T) / 2.0
+        self._symmetryError = np.linalg.norm(C_symm - C) / np.linalg.norm(C)
+
+    def print_errors(self):
+        """
+        Print multiple types of errors in the matrix of simulation results
+        """
+        print("Symmetry error: ", self._symmetryError)
+
+
+class HomogenizedCell(HomogenizationPostProcessing, SimulationBase):
     """
     Lattice homogeneization analysis
 
@@ -434,108 +546,3 @@ class HomogenizedCell(SimulationBase):
         self.compute_errors()
         self.homogenizeMatrix = 0.5 * (self.homogenizeMatrix + self.homogenizeMatrix.T)  # Ensure symmetry
         return self.homogenizeMatrix
-
-    # =============================================================================
-    # SECTION: Post-processing methods
-    # =============================================================================
-
-    @timing.category("homogenization")
-    @timing.timeit
-    def print_homogenized_matrix(self):
-        """
-        Print simulation results of 6 loading case
-        """
-        print("Homogenized matrix: ")
-        for row in self.homogenizeMatrix:
-            print(" ".join(f"{val:10.3f}" for val in row))
-
-    @timing.category("homogenization")
-    @timing.timeit
-    def convert_to_orthotropic_form(self):
-        """
-        Convert homogenize matrix to orthotropic form
-        """
-        Hinv = np.linalg.inv(self.homogenizeMatrix)
-        Ex = 1 / Hinv[0, 0]
-        Ey = 1 / Hinv[1, 1]
-        Ez = 1 / Hinv[2, 2]
-        Gxy = 1 / (2 * Hinv[3, 3])
-        Gxz = 1 / (2 * Hinv[4, 4])
-        Gyz = 1 / (2 * Hinv[5, 5])
-        nuxy = -Hinv[0, 1] * Ey
-        nuxz = -Hinv[0, 2] * Ez
-        nuyz = -Hinv[1, 2] * Ez
-
-        # Initialize orthotropic matrix
-        self.orthotropicMatrix = np.zeros_like(self.homogenizeMatrix)
-
-        # Normal stiffness
-        self.orthotropicMatrix[0, 0] = Ex
-        self.orthotropicMatrix[1, 1] = Ey
-        self.orthotropicMatrix[2, 2] = Ez
-        self.orthotropicMatrix[3, 3] = Gxy
-        self.orthotropicMatrix[4, 4] = Gxz
-        self.orthotropicMatrix[5, 5] = Gyz
-
-        # Poisson effects
-        self.orthotropicMatrix[0, 1] = nuxy
-        self.orthotropicMatrix[1, 0] = self.orthotropicMatrix[0, 1]
-        self.orthotropicMatrix[0, 2] = nuxz
-        self.orthotropicMatrix[2, 0] = self.orthotropicMatrix[0, 2]
-        self.orthotropicMatrix[1, 2] = nuyz
-        self.orthotropicMatrix[2, 1] = self.orthotropicMatrix[1, 2]
-
-    @timing.category("homogenization")
-    @timing.timeit
-    def get_S_orthotropic(self):
-        """
-        Return orthotropic matrix
-        """
-        Hinv = np.linalg.inv(self.homogenizeMatrix)
-        Ex = 1 / Hinv[0, 0]
-        Ey = 1 / Hinv[1, 1]
-        Ez = 1 / Hinv[2, 2]
-        Gxy = 1 / (2 * Hinv[3, 3])
-        Gxz = 1 / (2 * Hinv[4, 4])
-        Gyz = 1 / (2 * Hinv[5, 5])
-        nuxy = -Hinv[0, 1] * Ey
-        nuxz = -Hinv[0, 2] * Ez
-        nuyz = -Hinv[1, 2] * Ez
-        matSorthotropic = np.array([
-            [1 / Ex, -nuxy / Ex, -nuxz / Ex, 0.0, 0.0, 0.0],
-            [-nuxy / Ex, 1 / Ey, -nuyz / Ey, 0.0, 0.0, 0.0],
-            [-nuxz / Ex, -nuyz / Ey, 1 / Ez, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1 / Gxy, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1 / Gxz, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 0.0, 1 / Gyz]])
-        return matSorthotropic
-
-    def print_orthotropic_form(self):
-        """
-        Print orthotropic form of homogenization matrix
-        """
-        print('Ex ', self.orthotropicMatrix[0, 0])
-        print('Ey ', self.orthotropicMatrix[1, 1])
-        print('Ez ', self.orthotropicMatrix[2, 2])
-        print('nuxy ', self.orthotropicMatrix[0, 1])
-        print('nuxz ', self.orthotropicMatrix[0, 2])
-        print('nuyz ', self.orthotropicMatrix[1, 2])
-        print('Gxy ', self.orthotropicMatrix[3, 3])
-        print('Gxz ', self.orthotropicMatrix[4, 4])
-        print('Gyz ', self.orthotropicMatrix[5, 5])
-
-    @timing.category("homogenization")
-    @timing.timeit
-    def compute_errors(self):
-        """
-        Calculate errors
-        """
-        C = self.homogenizeMatrix
-        C_symm = (C + C.T) / 2.0
-        self._symmetryError = np.linalg.norm(C_symm - C) / np.linalg.norm(C)
-
-    def print_errors(self):
-        """
-        Print multiple types of errors in the matrix of simulation results
-        """
-        print("Symmetry error: ", self._symmetryError)

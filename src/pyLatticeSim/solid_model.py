@@ -56,6 +56,10 @@ class SolidModel:
     min_beam_length : float
         Beams shorter than this length are not meshed.
 
+    periodic_mesh : bool
+        If True, the meshes of opposite faces of the bounding box are identical (up to the translation), as required
+        by periodic boundary conditions. The lattice geometry itself must be periodic.
+
     verbose : int
         Verbosity level.
     """
@@ -63,8 +67,9 @@ class SolidModel:
     SURFACE_TAGS = {"Xmin": 1, "Xmax": 2, "Ymin": 3, "Ymax": 4, "Zmin": 5, "Zmax": 6}
 
     def __init__(self, COMM, lattice: "LatticeSim", mesh_refinement: float = 1.0, cell_index: int = None,
-                 min_beam_length: float = 1e-6, verbose: int = 1):
+                 min_beam_length: float = 1e-6, periodic_mesh: bool = False, verbose: int = 1):
         self.COMM = COMM
+        self.periodic_mesh = periodic_mesh
         self._verbose = verbose
         self.lattice = None
         self.domain = None
@@ -127,8 +132,12 @@ class SolidModel:
                                                                 min_beam_length=self.min_beam_length)
                 if axes is None:
                     raise RuntimeError("Failed to build the solid geometry of the lattice.")
+                if self.periodic_mesh:
+                    self.imprint_periodic_faces_gmsh()
                 volumes = [tag for _, tag in gmsh.model.getEntities(3)]
                 gmsh.model.addPhysicalGroup(3, volumes, tag=1)
+                if self.periodic_mesh:
+                    self.set_periodic_surfaces_gmsh()
                 self.lattice.set_mesh_size_gmsh(axes, mesh_refinement=self.mesh_refinement)
                 gmsh.model.mesh.generate(3)
             self.domain, self.markers, self.facets = gmshio.model_to_mesh(gmsh.model, self.COMM, 0, gdim=3)
@@ -139,6 +148,92 @@ class SolidModel:
             n_cells = self.domain.topology.index_map(3).size_global
             n_nodes = self.domain.geometry.index_map().size_global
             print(f"Solid mesh: {n_cells} tetrahedra, {n_nodes} nodes")
+
+    def _box_bounds(self) -> tuple[np.ndarray, np.ndarray, float]:
+        """Min and max corners of the lattice bounding box, and the tolerance used to find GMSH entities on it."""
+        lattice = self.lattice
+        mins = np.array([lattice.x_min, lattice.y_min, lattice.z_min], dtype=float)
+        maxs = np.array([lattice.x_max, lattice.y_max, lattice.z_max], dtype=float)
+        eps = 1e-4 * float(np.max(maxs - mins))  # OCC bounding boxes are enlarged by the geometric tolerance
+        return mins, maxs, eps
+
+    def _surfaces_on_plane(self, axis: int, value: float) -> dict:
+        """Surfaces of the current GMSH model lying on the plane x[axis] = value, with their bounding boxes."""
+        mins, maxs, eps = self._box_bounds()
+        box_min, box_max = mins - eps, maxs + eps
+        box_min[axis], box_max[axis] = value - eps, value + eps
+        entities = gmsh.model.getEntitiesInBoundingBox(*box_min, *box_max, 2)
+        return {tag: np.array(gmsh.model.getBoundingBox(2, tag)) for _, tag in entities}
+
+    @timing.category("solid_model_definition")
+    @timing.timeit
+    def imprint_periodic_faces_gmsh(self, n_passes: int = 2):
+        """
+        Give the same topology to opposite faces of the bounding box: OCC splits the circular edges of the cut beams
+        at arbitrary seam points, different on each side. Each face is copied onto the opposite one and fragmented
+        with the solid, so that both sides get the union of the vertices and can be meshed periodically.
+
+        Parameters
+        ----------
+        n_passes : int
+            Number of passes over the 3 directions (vertices imprinted along one direction can add vertices on the
+            edges shared with the faces of another direction).
+        """
+        mins, maxs, _ = self._box_bounds()
+        lengths = maxs - mins
+        for _ in range(n_passes):
+            for axis in range(3):
+                translation = np.zeros(3)
+                translation[axis] = lengths[axis]
+                tools = []
+                for value, sign in ((mins[axis], 1.0), (maxs[axis], -1.0)):
+                    faces = [(2, tag) for tag in self._surfaces_on_plane(axis, value)]
+                    if faces:
+                        copies = gmsh.model.occ.copy(faces)
+                        gmsh.model.occ.translate(copies, *(sign * translation))
+                        tools += copies
+                if not tools:
+                    continue
+                gmsh.model.occ.fragment(gmsh.model.occ.getEntities(3), tools)
+                gmsh.model.occ.synchronize()
+                # Remove the parts of the copies that are not on the solid boundary (non periodic geometry)
+                stray = [(2, tag) for _, tag in gmsh.model.getEntities(2)
+                         if len(gmsh.model.getAdjacencies(2, tag)[0]) == 0]
+                if stray:
+                    gmsh.model.occ.remove(stray, recursive=True)
+                    gmsh.model.occ.synchronize()
+
+    @timing.category("solid_model_definition")
+    @timing.timeit
+    def set_periodic_surfaces_gmsh(self):
+        """
+        Declare in the current GMSH model each surface lying on a max face of the bounding box as periodic with the
+        matching surface of the opposite min face, so that their meshes are identical up to the translation.
+        """
+        mins, maxs, eps = self._box_bounds()
+        lengths = maxs - mins
+        for axis, name in enumerate("XYZ"):
+            masters = self._surfaces_on_plane(axis, mins[axis])
+            slaves = self._surfaces_on_plane(axis, maxs[axis])
+            translation = np.zeros(3)
+            translation[axis] = lengths[axis]
+            affine = np.eye(4)
+            affine[:3, 3] = translation
+            unmatched = []
+            for slave_tag, slave_bbox in slaves.items():
+                shifted_bbox = slave_bbox - np.concatenate([translation, translation])
+                match = None
+                for master_tag, master_bbox in masters.items():
+                    if np.allclose(master_bbox, shifted_bbox, atol=eps):
+                        match = master_tag
+                        break
+                if match is None:
+                    unmatched.append(slave_tag)
+                    continue
+                gmsh.model.mesh.setPeriodic(2, [slave_tag], [match], affine.flatten().tolist())
+            if unmatched or len(slaves) != len(masters):
+                raise RuntimeError(f"The lattice geometry is not periodic along {name}: the faces {name}min and "
+                                   f"{name}max do not match.")
 
     @timing.category("solid_model_definition")
     @timing.timeit

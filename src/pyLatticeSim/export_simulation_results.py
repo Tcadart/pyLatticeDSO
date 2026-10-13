@@ -57,7 +57,7 @@ class exportSimulationResults:
         self.out_dir.mkdir(parents=True, exist_ok=True)
 
         # Master PVD (time series). All VTU pieces will sit alongside it.
-        self.pvd_path = self.out_dir / f"{name_export_file}.pvd"
+        self.pvd_path = self.out_dir / f"{Path(name_export_file).name}.pvd"
         self._vtk = io.VTKFile(self.simulation_model.domain.comm, str(self.pvd_path), "w")
 
         self.result_to_export = []
@@ -254,6 +254,31 @@ class exportSimulationResults:
 
         self.close_file()
 
+    def export_solid_data_homogenization(self, homogenization_surface: bool = True):
+        """
+        Export the total displacement of the 6 loading cases of a solid homogenization (SolidHomogenizedCell),
+        one time step per case.
+
+        Parameters
+        ----------
+        homogenization_surface: bool
+            Whether to export the homogenization surface as well.
+        """
+        _, fem = _import_dolfinx()
+        V1 = fem.functionspace(self.simulation_model.domain, ("Lagrange", 1, (3,)))
+        for case, simu_result in enumerate(self.simulation_model.saveDataToExport):
+            disp = fem.Function(V1, name="Displacement")
+            disp.interpolate(simu_result)
+            self.result_to_export.append(disp)
+            self.write_function(time=float(case))
+
+        if homogenization_surface:
+            self.export_homogenization_surface_paraview(np.asarray(self.simulation_model.get_S_orthotropic()),
+                                                        filename="homogenization_surface",
+                                                        n_theta=90, n_phi=180)
+
+        self.close_file()
+
     def export_homogenization_surface_paraview(self, mat_S_orthotropic: np.ndarray,
                                            filename: str = "homogenization_surface",
                                            n_theta: int = 90, n_phi: int = 180) -> Path:
@@ -290,7 +315,8 @@ class exportSimulationResults:
         points = np.asarray(pts, dtype=float)
 
         # Rescale to fit inside the lattice box
-        lat = getattr(self.simulation_model.BeamModel, "lattice", None)
+        model = getattr(self.simulation_model, "BeamModel", None) or getattr(self.simulation_model, "SolidModel", None)
+        lat = getattr(model, "lattice", None)
         if lat is not None:
             lx, ly, lz = float(lat.size_x), float(lat.size_y), float(lat.size_z)
             maxabs = np.maximum(np.max(np.abs(points), axis=0), 1e-12)  # avoid divide-by-zero
