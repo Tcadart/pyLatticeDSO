@@ -33,3 +33,21 @@ The image below illustrates a BCC lattice structure with rough beam surfaces gen
 ![Rough Lattice Structure](../images/BCC_rough.png)
 
 See the [Pyrough documentation](https://jamodeo12.github.io/Pyrough/) for more details on configuring roughness parameters and additional functionalities.
+
+---
+## Influence of the roughness on the mechanical response
+The example `examples/Pyrough/BCC_rough_compression.py` quantifies the effect of the roughness on a BCC cell with a
+virtual compression test (3D solid model, bonded rigid platens, linear elasticity):
+
+1. Pyrough generates the rough lattice (`Lattice.generate_mesh_lattice_rough`) for several RMS roughness amplitudes
+   and several random realizations, and the smooth references with a zero RMS (same meshing pipeline);
+2. the surface mesh is cut by the flat bounding box, cleaned and meshed with tetrahedra
+   (`SolidModel(..., surface_mesh_file=...)`);
+3. the apparent modulus, the relative density and the stress concentrations are compared with smooth samples at the
+   same nominal radius and at the same relative density (radius sweep).
+
+Requirements: the `pyLattice_comp_V2` branch of Pyrough, whose root folder is given by the environment variable
+`PYROUGH_PATH`, and `pip install manifold3d pymeshlab trimesh networkx wulffpack ase meshio`.
+```bash
+PYROUGH_PATH=/path/to/Pyrough python examples/Pyrough/BCC_rough_compression.py
+```

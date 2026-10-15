@@ -2050,7 +2050,7 @@ class Lattice(object):
     @timing.timeit
     def generate_mesh_lattice_rough(self, name_file_rough_parameters: str, name_stl_out: str, print_volume: bool = True,
                                     save_mesh: bool = True, cut_mesh_at_boundary: bool = False,
-                                    refine_mesh: bool = False) -> None:
+                                    refine_mesh: bool = False, seed: int = None) -> None:
         """
         Generate a mesh of the lattice structure with Pyrough library.
 
@@ -2068,6 +2068,10 @@ class Lattice(object):
             If True, cut the mesh at the boundary of the lattice.
         refine_mesh: bool
             If True, refine the generated mesh using Pyrough's refinement function.
+        seed: int, optional
+            Seed of the random roughness. The numpy global generator used by Pyrough is seeded with seed + index of the
+            beam before each beam, so that the roughness of a beam does not depend on the random draws made for the
+            other beams (the same rough surface is obtained for any radius). If None, the generator is not seeded.
         """
         try:
             from src import Param_class, Sample_class, Func_pyrough as fp
@@ -2121,12 +2125,19 @@ class Lattice(object):
         all_manifolds = []
 
         # Generate the rough wire mesh for each beam
-        for beam in self.beams:
+        for index_beam, beam in enumerate(self.beams):
+            if seed is not None:
+                np.random.seed(seed + index_beam)
             p1 = np.array(beam.point1.coordinates)
             p2 = np.array(beam.point2.coordinates)
             radius = beam.initial_radius if getattr(beam, "initial_radius", None) is not None else beam.radius
+            # The wires are extended past the nodes: beams ending at the same node with coplanar end faces (e.g.
+            # aligned beams) would only touch and would not be fused by the boolean union
+            overlap = 0.05 * radius
+            axis = (p2 - p1) / np.linalg.norm(p2 - p1)
+            p1, p2 = p1 - overlap * axis, p2 + overlap * axis
             param.radius = radius
-            param.length = beam.length
+            param.length = beam.length + 2.0 * overlap
             if param.beam_type == "cwire":
                 param.type_S = "cwire"
                 vertices, faces, _, _ = Sample_class.make_cwire(param, path_out)
