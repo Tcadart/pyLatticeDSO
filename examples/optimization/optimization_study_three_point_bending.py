@@ -24,13 +24,16 @@ from pyLatticeSim.lattice_sim import LatticeSim
 from pyLatticeSim.utils_simulation import solve_FEM_FenicsX
 
 name_file = "optimization/Three_point_bending"
-max_iterations = 100
+max_iterations = int(next((a.split("=")[1] for a in sys.argv if a.startswith("--max-iterations=")), 100))
 
 parameterizations = {
     "hybrid": {"type": "constant", "hybrid": True},
     "graded": {"type": "linear", "direction": ["x", "z"], "hybrid": False},
     "unit_cell": {"type": "unit_cell", "direction": "x", "hybrid": True},
 }
+selected = [a for a in sys.argv[1:] if a in parameterizations]  # run only these cases (all by default)
+if selected:
+    parameterizations = {name: parameterizations[name] for name in selected}
 
 save_dir = Path(__file__).resolve().parents[2] / "data" / "outputs" / "optimization_study" / "Three_point_bending"
 save_dir.mkdir(parents=True, exist_ok=True)
@@ -143,10 +146,14 @@ for name, parameters in parameterizations.items():
     del lattice
 
 # Verification of the initial and optimized designs with the full-order beam FEM
-print("\n=== Full-order FEM: initial design ===")
-initial_verification = verify(next(iter(results.values()))["design"]["initial_cell_radii"])
-with open(save_dir / "FEM_initial.json", "w") as file:
-    json.dump(initial_verification, file, indent=2, default=float)
+# The initial design is the same for every case and every run: its FEM result is reused when available
+if (save_dir / "FEM_initial.json").exists():
+    initial_verification = json.loads((save_dir / "FEM_initial.json").read_text())
+else:
+    print("\n=== Full-order FEM: initial design ===")
+    initial_verification = verify(next(iter(results.values()))["design"]["initial_cell_radii"])
+    with open(save_dir / "FEM_initial.json", "w") as file:
+        json.dump(initial_verification, file, indent=2, default=float)
 
 for name, case in results.items():
     print(f"\n=== Full-order FEM: {name} ===")
@@ -163,7 +170,8 @@ for name, case in results.items():
         json.dump(case, file, indent=2, default=float)
     print(json.dumps(case["compliance"], indent=2))
 
-with open(save_dir / "summary.json", "w") as file:
-    json.dump({k: {kk: v for kk, v in case.items() if kk not in ("history", "design")} for k, case in results.items()},
-              file, indent=2, default=float)
+summary_path = save_dir / "summary.json"
+summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}
+summary.update({k: {kk: v for kk, v in case.items() if kk not in ("history", "design")} for k, case in results.items()})
+summary_path.write_text(json.dumps(summary, indent=2, default=float))
 print("\nResults saved to", save_dir)

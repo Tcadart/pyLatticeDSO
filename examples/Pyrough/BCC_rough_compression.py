@@ -103,36 +103,48 @@ def generate_surface_mesh(radius: float, sq: float, seed: int, name: str) -> Pat
     solid = solid ^ manifold3d.Manifold.cube(tuple(maxs - mins)).translate(tuple(mins))
     cut = solid.to_mesh()
 
-    # The cut leaves slivers on the planar faces, that make the tetrahedral mesher fail: isotropic remeshing
+    # Put back on the planes the vertices of the cut faces (float32 precision of manifold3d)
+    vertices = np.asarray(cut.vert_properties[:, :3], dtype=np.float64)
+    tol = 1e-5 * float(np.max(maxs - mins))
+    for axis in range(3):
+        for value in (mins[axis], maxs[axis]):
+            vertices[np.abs(vertices[:, axis] - value) < tol, axis] = value
+
+    # The cut leaves slivers on the planar faces, that make the tetrahedral mesher fail: isotropic remeshing (the
+    # vertices are projected on the input surface, so that the cut faces stay planar)
     target = float(np.median(mesh.edges_unique_length))
     meshset = pymeshlab.MeshSet()
-    meshset.add_mesh(pymeshlab.Mesh(vertex_matrix=np.asarray(cut.vert_properties[:, :3], dtype=np.float64),
-                                    face_matrix=np.asarray(cut.tri_verts, dtype=np.int32)))
+    meshset.add_mesh(pymeshlab.Mesh(vertex_matrix=vertices, face_matrix=np.asarray(cut.tri_verts, dtype=np.int32)))
     meshset.meshing_isotropic_explicit_remeshing(targetlen=pymeshlab.PureValue(target), iterations=5, featuredeg=30)
 
-    # The union of the Pyrough wires leaves a few self-intersecting faces at the junctions (rejected by the mesher):
-    # removed with their neighbours and the holes are closed
+    # The union of the Pyrough wires leaves a few self-intersecting faces and needle triangles at the junctions
+    # (rejected by the tetrahedral mesher): needles are removed by edge flips and collapses, self-intersecting faces
+    # with their neighbours, and the holes are closed
     for _ in range(10):
+        meshset.meshing_remove_t_vertices()
+        meshset.meshing_remove_folded_faces()
+        meshset.meshing_remove_null_faces()
+        meshset.meshing_remove_unreferenced_vertices()
+        meshset.meshing_repair_non_manifold_edges()  # non manifold edges and holes left by the collapses
+        meshset.meshing_repair_non_manifold_vertices()
+        meshset.meshing_close_holes(maxholesize=1000)
         meshset.compute_selection_by_self_intersections_per_face()
         if meshset.current_mesh().selected_face_number() == 0:
             break
         meshset.apply_selection_dilatation()
         meshset.meshing_remove_selected_faces()
-        meshset.meshing_remove_unreferenced_vertices()
-        meshset.meshing_close_holes(maxholesize=1000)
     else:
         raise RuntimeError(f"Self-intersections of the surface mesh of {name} could not be removed.")
     remeshed = meshset.current_mesh()
-    vertices = remeshed.vertex_matrix().copy()
 
-    # Put back on the planes the vertices of the cut faces (moved by the float32 precision and the remeshing)
-    tol = 1e-5 * float(np.max(maxs - mins))
+    # Vertices at the border of the cut faces are slightly moved by the remeshing (~1e-8 L): put back on the planes
+    vertices = remeshed.vertex_matrix().copy()
     for axis in range(3):
         for value in (mins[axis], maxs[axis]):
             vertices[np.abs(vertices[:, axis] - value) < tol, axis] = value
     surface = trimesh.Trimesh(vertices=vertices, faces=remeshed.face_matrix(), process=False)
-    if not surface.is_watertight:
-        raise RuntimeError(f"The surface mesh of {name} is not closed.")
+    if not surface.is_watertight or np.any(surface.area_faces < 1e-12 * target ** 2):
+        raise RuntimeError(f"The surface mesh of {name} is not closed or has degenerate faces.")
     path = mesh_dir / f"{name}.stl"
     surface.export(path)
     return path
@@ -154,7 +166,7 @@ def compression_test(surface_mesh: Path, name: str, export: bool = False) -> dic
     solid_model = SolidModel(MPI.COMM_SELF, lattice, surface_mesh_file=str(surface_mesh), verbose=0)
     simulation = SolidLatticeSimulation(solid_model, element_degree=element_degree, verbose=0)
     simulation.apply_boundary_conditions_from_lattice()
-    simulation.solve_problem()
+    simulation.solve_problem(solver="iterative", rtol=1e-10)  # direct solver: too much memory for P2 elements
 
     displacement = lattice.boundary_conditions["Displacement"]["Compression"]["Value"][2]
     force = simulation.compute_reaction_forces()["Compression"][2]
@@ -235,10 +247,15 @@ nominal = next(e for e in smooth if np.isclose(e["radius"], radius))
 
 # Smooth samples: E*(rho) fitted in log-log (quadratic), E*(r) interpolated for the equivalent radius
 fit_E = np.polyfit(np.log(rho_smooth), np.log(E_smooth), 2)
+fit_vm = np.polyfit(np.log(rho_smooth), np.log(vm_smooth), 2)
 
 
 def E_smooth_at_density(rho):
     return np.exp(np.polyval(fit_E, np.log(rho)))
+
+
+def vm_smooth_at_density(rho):
+    return np.exp(np.polyval(fit_vm, np.log(rho)))
 
 
 summary = {0.0: {"rho": np.array([nominal["relative_density"]]), "E": np.array([nominal["E"] / E_s]),
@@ -254,11 +271,13 @@ for ratio, s in summary.items():
     s["E_nominal"] = s["E"] / (nominal["E"] / E_s)
     s["E_same_density"] = s["E"] / E_smooth_at_density(s["rho"])
     s["vm_nominal"] = s["vm"] / nominal["von_mises_p99"]
+    s["vm_same_density"] = s["vm"] / vm_smooth_at_density(s["rho"])
     s["r_eq_stiffness"] = np.interp(s["E"], E_smooth, r_smooth) / radius
     s["r_eq_volume"] = np.interp(s["rho"], rho_smooth, r_smooth) / radius
 
 columns = {"rho_nominal": "rho/rho0", "E_nominal": "E/E0", "E_same_density": "E/E_smooth(rho)",
-           "r_eq_volume": "r_eq,vol/r", "r_eq_stiffness": "r_eq,E/r", "vm_nominal": "VM99/VM99_0"}
+           "r_eq_volume": "r_eq,vol/r", "r_eq_stiffness": "r_eq,E/r", "vm_nominal": "VM99/VM99_0",
+           "vm_same_density": "VM99/VM99_smooth(rho)"}
 print("\nSq/r   " + "".join(f"{label:<19}" for label in columns.values()))
 for ratio, s in summary.items():
     print(f"{ratio:<6.3f} " + "".join(f"{s[k].mean():.3f} +- {s[k].std():.3f}   " for k in columns))
@@ -312,12 +331,13 @@ fig.savefig(save_dir / "roughness_knockdown.png", dpi=300)
 
 # Figure 3: stress concentrations
 fig, ax = plt.subplots(figsize=(6, 4.5))
-mean = np.array([summary[r]["vm"].mean() for r in ratios])
-std = np.array([summary[r]["vm"].std() for r in ratios])
-ax.errorbar(ratios, mean, yerr=std, fmt="o-", capsize=3, label="Rough (nominal radius)")
-ax.axhline(nominal["von_mises_p99"], color="k", linewidth=0.8, label="Smooth (nominal radius)")
+for key, style, label in (("vm_nominal", "o-", "Same nominal radius"), ("vm_same_density", "s--", "Same density")):
+    mean = np.array([summary[r][key].mean() for r in ratios])
+    std = np.array([summary[r][key].std() for r in ratios])
+    ax.errorbar(ratios, mean, yerr=std, fmt=style, capsize=3, label=label)
+ax.axhline(1.0, color="k", linewidth=0.8)
 ax.set_xlabel(r"RMS roughness $S_q / r$")
-ax.set_ylabel(r"$\sigma_{VM, 99\%} / |\sigma_{macro}|$")
+ax.set_ylabel(r"$\sigma_{VM, 99\%}$ rough / smooth (same macroscopic stress)")
 ax.set_title("Stress concentrations at the rough surface")
 ax.grid(alpha=0.3)
 ax.legend(fontsize=8)

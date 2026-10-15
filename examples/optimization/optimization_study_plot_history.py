@@ -38,7 +38,7 @@ for ax in (ax_c, ax_rho):
         ax.spines[side].set_visible(False)
 ax_c.set_ylim(bottom=0)
 ax_c.legend(frameon=False, fontsize=9)
-ax_rho.legend(frameon=False, fontsize=9, loc="lower right")
+ax_rho.legend(frameon=False, fontsize=9, loc="upper right")
 fig.tight_layout()
 fig.savefig(save_dir / "optimization_history.png", dpi=200)
 fig.savefig(save_dir / "optimization_history.pdf")

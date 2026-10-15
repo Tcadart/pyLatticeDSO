@@ -1,0 +1,39 @@
+{
+  "geometry": {
+    "cell_size": {
+      "x": 200,
+      "y": 200,
+      "z": 200
+    },
+    "number_of_cells": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "radii": [
+      20.0
+    ],
+    "geom_types": [
+      "BCC"
+    ]
+  },
+  "simulation_parameters": {
+    "enable": false,
+    "material": "Ti-6Al-4V",
+    "periodicity": false
+  },
+  "boundary_conditions": {
+    "Displacement": {
+      "Fixed": {
+        "Surface": ["Zmin"],
+        "DOF": ["X", "Y", "Z"],
+        "Value": [0, 0, 0]
+      },
+      "Compression": {
+        "Surface": ["Zmax"],
+        "DOF": ["X", "Y", "Z"],
+        "Value": [0, 0, -2.0]
+      }
+    }
+  }
+}

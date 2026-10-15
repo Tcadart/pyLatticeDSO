@@ -29,6 +29,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from pyLatticeDesign.utils import open_lattice_parameters
+import pyLatticeSim.lattice_sim as lattice_sim_module
 from pyLatticeSim.export_simulation_results import exportSimulationResults
 from pyLatticeSim.lattice_sim import LatticeSim
 from pyLatticeSim.utils_simulation import solve_FEM_FenicsX, solve_FEM_solid_FenicsX
@@ -54,6 +55,26 @@ ddm_methods = {"DDM": "exact",
 
 save_dir = Path(__file__).resolve().parents[2] / "data" / "outputs" / "simulation_results" / name_file
 save_dir.mkdir(parents=True, exist_ok=True)
+
+# Progress of the exact Schur complement computations (one FE solve per distinct cell)
+schur_progress_every = 100
+_get_schur_complement = lattice_sim_module.get_schur_complement
+_schur_progress = {"count": 0, "start": None}
+
+
+def get_schur_complement_with_progress(lattice, cell_index=None):
+    if _schur_progress["count"] == 0:
+        _schur_progress["start"] = time.time()
+    schur_complement = _get_schur_complement(lattice, cell_index)
+    _schur_progress["count"] += 1
+    if _schur_progress["count"] % schur_progress_every == 0:
+        elapsed_schur = time.time() - _schur_progress["start"]
+        print(f"[Schur] {_schur_progress['count']}/{len(lattice.cells)} exact Schur complements computed "
+              f"({elapsed_schur:.0f} s, {elapsed_schur / _schur_progress['count']:.2f} s each)", flush=True)
+    return schur_complement
+
+
+lattice_sim_module.get_schur_complement = get_schur_complement_with_progress
 
 
 def lattice_DDM(schur_complement_type: str) -> LatticeSim:
