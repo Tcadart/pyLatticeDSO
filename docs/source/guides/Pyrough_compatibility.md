@@ -36,18 +36,19 @@ See the [Pyrough documentation](https://jamodeo12.github.io/Pyrough/) for more d
 
 ---
 ## Influence of the roughness on the mechanical response
-The example `examples/Pyrough/BCC_rough_compression.py` quantifies the effect of the roughness on a BCC cell with a
-virtual compression test (3D solid model, bonded rigid platens, linear elasticity):
+The example `examples/Pyrough/BCC_rough_same_density.py` quantifies the effect of the roughness on a BCC cell at
+constant relative density (3D solid model, linear elasticity):
 
-1. Pyrough generates the rough lattice (`Lattice.generate_mesh_lattice_rough`) for several RMS roughness amplitudes
-   and several random realizations, and the smooth references with a zero RMS (same meshing pipeline);
-2. the surface mesh is cut by the flat bounding box, cleaned and meshed with tetrahedra
+1. Pyrough generates rough cells with random roughness parameters (RMS, Hurst exponent, number of Fourier modes) with
+   `Lattice.generate_mesh_lattice_rough` (the `seed` argument makes the random surface reproducible);
+2. as Pyrough adds the roughness outward, the strut radius of each rough cell is decreased until its relative density
+   matches the one of the smooth cell;
+3. the surface mesh is cut by the flat bounding box, cleaned and meshed with tetrahedra
    (`SolidModel(..., surface_mesh_file=...)`);
-3. the apparent modulus, the relative density and the stress concentrations are compared with smooth samples at the
-   same nominal radius and at the same relative density (radius sweep).
+4. the apparent moduli in compression and in shear (bonded rigid platens) are compared with the smooth cell.
 
 Requirements: the `pyLattice_comp_V2` branch of Pyrough, whose root folder is given by the environment variable
 `PYROUGH_PATH`, and `pip install manifold3d pymeshlab trimesh networkx wulffpack ase meshio`.
 ```bash
-PYROUGH_PATH=/path/to/Pyrough python examples/Pyrough/BCC_rough_compression.py
+PYROUGH_PATH=/path/to/Pyrough python examples/Pyrough/BCC_rough_same_density.py
 ```

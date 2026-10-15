@@ -35,8 +35,10 @@ fem, common = _import_dolfinx_fem_common()
 
 def set_direct_lu_solver(pc) -> None:
     """
-    Configure a PETSc PC as a direct LU factorization, using SuperLU_DIST when PETSc provides it
-    (much faster than the native PETSc LU on large beam models).
+    Configure a PETSc PC as a direct LU factorization, using MUMPS when PETSc provides it (much faster than the native
+    PETSc LU on large beam models), else SuperLU_DIST.
+    SuperLU_DIST is not the first choice: with the default number of OpenMP threads it is ~50x slower than MUMPS on
+    machines with many cores (thread oversubscription), and it runs out of memory on large lattices.
 
     Parameters:
     -----------
@@ -45,7 +47,9 @@ def set_direct_lu_solver(pc) -> None:
     """
     from petsc4py import PETSc
     pc.setType(PETSc.PC.Type.LU)
-    if PETSc.Sys.hasExternalPackage("superlu_dist"):
+    if PETSc.Sys.hasExternalPackage("mumps"):
+        pc.setFactorSolverType("mumps")
+    elif PETSc.Sys.hasExternalPackage("superlu_dist"):
         pc.setFactorSolverType("superlu_dist")
 
 class SimulationBase:

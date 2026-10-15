@@ -325,51 +325,48 @@ for key, path in cells:
     if not (image_dir / f"{key}.png").exists():
         render_cell(path, image_dir / f"{key}.png", deviation_limit)
 
-# Figure: change of the moduli of each rough cell against the smooth cell, with the image of the cell
+# Figure: change of the moduli of each rough cell against the smooth cell (reference column on the left), with the
+# image of each cell above its data points
 plt.rcParams.update({"font.size": 9, "axes.labelsize": 9, "legend.fontsize": 8,
                      "axes.spines.top": False, "axes.spines.right": False})
 x = np.arange(len(samples))
 styles = {"compression": ("o", "#1f4e79", r"Compression, $E^*$"), "shear": ("s", "#c0504d", r"Shear, $G^*$")}
-fig, ax = plt.subplots(figsize=(7.2, 4.4))
+offsets = {"compression": -0.13, "shear": 0.13}
+fig, ax = plt.subplots(figsize=(7.2, 4.6))
 ax.axhline(0.0, color="#6b6b6b", linewidth=1.0)
-offsets = {"compression": -0.12, "shear": 0.12}
+ax.axvline(-0.5, color="#6b6b6b", linewidth=0.6, linestyle=":")
 for case, (marker, color, label) in styles.items():
-    ax.plot(x + offsets[case], changes[case], marker, color=color, markersize=7, markeredgecolor="white",
-            markeredgewidth=1.0, label=label, linestyle="none")
-    ax.axhline(changes[case].mean(), color=color, linewidth=0.8, linestyle="--")
+    ax.plot(np.append(-1, x) + offsets[case], np.append(0.0, changes[case]), marker, color=color, markersize=7,
+            markeredgecolor="white", markeredgewidth=1.0, label=label, linestyle="none")
+    ax.plot([-0.4, len(samples) - 0.6], [changes[case].mean()] * 2, color=color, linewidth=0.9, linestyle="--",
+            label=f"mean {changes[case].mean():+.1f} %")
 values = np.concatenate(list(changes.values()))
-span = max(np.abs(values).max(), 1.0)
-ax.set_ylim(-1.6 * span, 1.6 * span)
-ax.set_xlim(-0.6, len(samples) - 0.4)
-ax.set_xticks(x)
-ax.set_xticklabels([f"{e['Sq_over_radius']:.3f}\n{e['eta']:.2f}\n{e['N']}" for _, e in samples], fontsize=7.5)
-ax.text(-0.6, -1.6 * span, "$S_q/r$\n$\\eta$\n$N$", fontsize=7.5, ha="right", va="top",
-        transform=ax.transData)
+ax.set_ylim(min(values.min(), 0.0) - 1.5, max(values.max(), 0.0) + 1.5)
+ax.set_xlim(-1.5, len(samples) - 0.5)
+ax.set_xticks(np.append(-1, x))
+ax.set_xticklabels(["Smooth\n$r_0$ = " + f"{radius_smooth:g}"] +
+                   [f"{e['Sq_over_radius']:.3f}\n{e['eta']:.2f}\n{e['N']}" for _, e in samples], fontsize=7.5)
+ax.annotate("$S_q/r_0$\n$\\eta$\n$N$", xy=(-1.5, 0), xycoords=("data", "axes fraction"), xytext=(-4, -7),
+            textcoords="offset points", ha="right", va="top", fontsize=7.5)
 ax.set_ylabel("Change against the smooth cell (%)")
 ax.grid(axis="y", alpha=0.3, linewidth=0.5)
-ax.legend(loc="lower right", frameon=False, ncol=2)
-ax.set_title(f"BCC cells at constant relative density $\\rho^*$ = {reference['relative_density']:.3f}",
-             fontsize=9, pad=70)
+ax.legend(loc="lower center", frameon=False, ncol=4, bbox_to_anchor=(0.5, -0.38), fontsize=7.5)
 
-# Image of each cell above its data points, and of the smooth cell on the left
-for i, (key, _) in enumerate(samples):
-    image = plt.imread(image_dir / f"{key}.png")
-    inset = ax.inset_axes([i - 0.45, 1.6 * span * 1.02, 0.9, 0.9 * 2 * 1.6 * span * 0.42], transform=ax.transData)
-    inset.set_clip_on(False)
-    inset.imshow(image)
+# Images of the cells, the strut surface colored by its distance to the axes relative to the smooth radius
+for i, key in [(-1, "smooth")] + [(i, key) for i, (key, _) in enumerate(samples)]:
+    inset = ax.inset_axes([i - 0.5, 1.02, 1.0, 0.36], transform=ax.get_xaxis_transform())
+    inset.imshow(plt.imread(image_dir / f"{key}.png"))
     inset.set_axis_off()
-smooth_inset = fig.add_axes([0.0, 0.70, 0.11, 0.2])
-smooth_inset.imshow(plt.imread(image_dir / "smooth.png"))
-smooth_inset.set_axis_off()
-smooth_inset.set_title("Smooth", fontsize=8, pad=0)
-colorbar_ax = fig.add_axes([0.93, 0.70, 0.01, 0.17])
+colorbar_ax = fig.add_axes([0.925, 0.73, 0.01, 0.17])
 colorbar = fig.colorbar(plt.cm.ScalarMappable(cmap=plt.cm.RdBu_r, norm=plt.Normalize(-deviation_limit,
                                                                                      deviation_limit)),
                         cax=colorbar_ax)
 colorbar.ax.set_title(r"$\frac{d - r_0}{r_0}$", fontsize=8)
 colorbar.ax.tick_params(labelsize=7)
-fig.subplots_adjust(left=0.14, right=0.9, top=0.68, bottom=0.2)
-fig.savefig(save_dir / "roughness_same_density.pdf")
-fig.savefig(save_dir / "roughness_same_density.png", dpi=300)
+fig.suptitle(f"BCC cells at constant relative density $\\rho^*$ = {reference['relative_density']:.3f}", fontsize=9,
+             y=0.99)
+fig.subplots_adjust(left=0.13, right=0.9, top=0.68, bottom=0.25)
+fig.savefig(save_dir / "roughness_same_density.pdf", bbox_inches="tight")
+fig.savefig(save_dir / "roughness_same_density.png", dpi=300, bbox_inches="tight")
 print(f"\nFigure and results saved in {save_dir}")
 plt.show()

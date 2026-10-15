@@ -103,7 +103,7 @@ def curveLattice(lattice, center_x: float, center_y: float, center_z: float,
 
 @timing.category("design_transformation")
 @timing.timeit
-def cylindrical_transform(lattice, radius: float) -> None:
+def cylindrical_transform(lattice, radius: float, wall_thickness: bool = False) -> None:
     """
     Apply cylindrical transformation to the lattice structure.
     To create stent structures, 1 cell in the X direction is required and you can choose any number of cells in
@@ -114,17 +114,29 @@ def cylindrical_transform(lattice, radius: float) -> None:
     radii: float
         radii of the cylinder.
     """
-    max_y = lattice.size_y
-    for cell in lattice.cells:
-        for node in cell.points_cell:
-            x, y, z = node.x, node.y, node.z
-            # Convert Cartesian coordinates (x, y, z) to cylindrical coordinates (r, theta, z)
-            theta = (y / max_y) * 2 * math.pi  # theta = (y / total height) * 2 * pi
-            new_x = radius * math.cos(theta)
-            new_y = radius * math.sin(theta)
-            node.move_to(new_x, new_y, z)
     lattice.define_lattice_dimensions()
-    lattice.delete_duplicated_beams()
+    x_min, y_min = lattice.x_min, lattice.y_min
+    span_y = lattice.y_max - lattice.y_min
+
+    # Nodes are shared between neighbouring cells: collect each node object only once (by identity,
+    # since Point.__hash__ depends on coordinates) so that it is not transformed several times.
+    unique_nodes = {id(node): node for cell in lattice.cells for node in cell.points_cell}
+
+    for node in unique_nodes.values():
+        x, y, z = node.x, node.y, node.z
+        # Convert Cartesian coordinates (x, y, z) to cylindrical coordinates (r, theta, z)
+        if wall_thickness:
+            r = radius + (x - x_min)  # X direction gives the wall thickness
+        else:
+            r = radius  # X direction is ignored for the wall thickness
+        theta = ((y - y_min) / span_y) * 2 * math.pi
+        node.move_to(r * math.cos(theta), r * math.sin(theta), z)
+
+    # Point hashes depend on coordinates: rebuild the sets so membership tests stay valid
+    for cell in lattice.cells:
+        cell.points_cell = set(list(cell.points_cell))
+    lattice.nodes = set(list(lattice.nodes))
+    lattice.define_lattice_dimensions()
 
 
 @timing.category("design_transformation")
