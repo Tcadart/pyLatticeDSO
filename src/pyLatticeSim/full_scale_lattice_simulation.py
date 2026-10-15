@@ -136,14 +136,16 @@ class FullScaleLatticeSimulation(SimulationBase):
         node_pos = np.round(self.domain.geometry.x, 3)
         map_pos2idx = {tuple(p): i for i, p in enumerate(node_pos)}
 
+        loaded_positions = set()  # a node shared by several cells is loaded only once
         for cell in self.BeamModel.lattice.cells:
             for node in cell.points_cell:
                 if not np.any(node.applied_force):
                     continue
                 key = tuple(np.round([node.x, node.y, node.z], 3))
                 vertex = map_pos2idx.get(key, None)
-                if vertex is None:
+                if vertex is None or key in loaded_positions:
                     continue
+                loaded_positions.add(key)
                 entities = np.array([vertex], dtype=np.int32)
                 # displacement subspace (0), component i = 0,1,2
                 for i in range(3):

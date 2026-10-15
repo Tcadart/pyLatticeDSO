@@ -9,8 +9,8 @@ from pyLatticeOpti.lattice_opti import LatticeOpti
 from pyLatticeDesign.utils import save_JSON_to_Grasshopper, save_lattice_object
 
 path = "optimization/"
-# name_file = "Three_point_bending"
-name_file = "Cantilever_L_beam"
+name_file = "Three_point_bending"
+# name_file = "Cantilever_L_beam"
 
 
 start_time = time.time()
