@@ -10,31 +10,33 @@ authors = [{name="Thomas Cadart", email="thomas.cadart@utbm.fr"}]
 license = {text = "MIT"}
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "numpy>=1.26.4",
-    "matplotlib>=3.8.0",
+    "numpy>=1.26",
+    "matplotlib>=3.8",
     "colorama>=0.4.6",
-    "joblib>=1.4.2",
-    "pytest>=8.4.1",
-    "gmsh>=4.14.0",
+    "joblib>=1.4",
+    "pytest>=8.0",
+    "gmsh>=4.14",
     "sympy>=1.12",
 ]
 
 [project.optional-dependencies]
+# FEniCSx and dolfinx_mpc are only distributed through conda-forge (see environment.yml); the code uses the
+# DOLFINx 0.9 API, hence the upper bounds
 simulation = [
-    "dolfinx==0.9.0", # Needs to be install via conda-forge
-    "ufl==2024.2.0" ,
-    "basix==0.9.0",
-    "dolfinx_mpc",
+    "dolfinx>=0.9,<0.10",
+    "ufl>=2024.2,<2025",
+    "basix>=0.9,<0.10",
+    "dolfinx_mpc>=0.9,<0.10",
     "petsc4py",
-    "scipy==1.16.0"
+    "scipy>=1.16",
 ]
 mesh_operations = [
-    "trimesh==4.7.4",
-    "rtree==1.0.1",
-    "pyembree"
+    "trimesh>=4.7",
+    "rtree>=1.0.1",
+    "pyembree",
 ]
 optimization = [
-    "scikit-learn==1.7.1"
+    "scikit-learn>=1.7",
 ]
 
 [tool.setuptools]
@@ -46,3 +48,10 @@ where = ["src"]
 [tool.pdoc]
 docformat = "numpy"
 
+
+[tool.pytest.ini_options]
+testpaths = ["Tests"]
+python_files = ["*_test.py"]
+markers = [
+    "simulation: requires the FEniCSx simulation dependencies (skipped when they are not installed)",
+]

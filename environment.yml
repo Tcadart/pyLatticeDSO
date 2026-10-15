@@ -1,0 +1,29 @@
+# Tested environment (Ubuntu under WSL2 and GitHub Actions ubuntu-latest).
+#   conda env create -f environment.yml
+#   conda activate pyLatticeDSO
+#   pip install -e .
+name: pyLatticeDSO
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy=1.26.4
+  - scipy=1.17.1
+  - scikit-learn=1.9.1
+  - fenics-dolfinx=0.9.0
+  - dolfinx_mpc=0.9.1
+  - petsc4py=3.23.0
+  - mpi4py=4.1.2
+  - openmpi=5.0.8
+  - trimesh=5.1.1
+  - rtree=1.4.1
+  - libspatialindex=2.1.0
+  - pyembree=0.1.6
+  - joblib=1.6.0
+  - pip
+  - pip:
+      - matplotlib==3.11.2
+      - gmsh==4.15.2
+      - sympy==1.14.0
+      - colorama==0.4.6
+      - pytest==9.1.1

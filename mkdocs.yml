@@ -63,6 +63,7 @@ nav:
       - Roughness module: guides/Pyrough_compatibility.md
       - Simulation: guides/simulation_methods.md
       - Optimization: guides/optimization_methods.md
+      - Reproducibility: guides/Reproducibility.md
 
   - Référence API:
       - pyLattice: api/pylatticedesign.md
