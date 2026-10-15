@@ -122,6 +122,13 @@ python -c "import dolfinx; print('FEniCSx OK')"
 python -c "import trimesh, rtree; print('Trimesh & Rtree OK')"
 ```
 
+Then run the test suite (the simulation tests are skipped when FEniCSx is not installed):
+```bash
+pytest -v
+```
+The exact tested versions are pinned in `environment.yml` (`conda env create -f environment.yml`), see
+[Reproducibility](Reproducibility.md).
+
 ---
 
 ## 6. Example Usage
