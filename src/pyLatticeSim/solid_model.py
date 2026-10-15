@@ -64,6 +64,12 @@ class SolidModel:
         If True, the meshes of opposite faces of the bounding box are identical (up to the translation), as required
         by periodic boundary conditions. The lattice geometry itself must be periodic.
 
+    surface_mesh_file : str, optional
+        Closed surface mesh (STL) of the lattice, e.g. a rough mesh generated with Pyrough, meshed with tetrahedra
+        instead of the beam geometry of the lattice. The faces of the bounding box loaded by the boundary conditions
+        must be planar (mesh cut at the bounding box of the lattice). The lattice gives the bounding box, the material
+        and the boundary conditions. Only straight tetrahedra (geometry_order = 1) are used.
+
     verbose : int
         Verbosity level.
     """
@@ -72,10 +78,13 @@ class SolidModel:
 
     def __init__(self, COMM, lattice: "LatticeSim", mesh_refinement: float = 1.0, cell_index: int = None,
                  min_beam_length: float = 1e-6, periodic_mesh: bool = False, geometry_order: int = 1,
-                 verbose: int = 1):
+                 surface_mesh_file: str = None, verbose: int = 1):
         self.COMM = COMM
         self.periodic_mesh = periodic_mesh
         self.geometry_order = geometry_order
+        self.surface_mesh_file = surface_mesh_file
+        if surface_mesh_file is not None and (periodic_mesh or geometry_order > 1):
+            raise ValueError("A surface mesh file is meshed with straight tetrahedra and without periodicity.")
         self._verbose = verbose
         self.lattice = None
         self.domain = None
@@ -132,7 +141,9 @@ class SolidModel:
         try:
             gmsh.option.setNumber("General.Verbosity", 1)
             gmsh.model.add("solid_lattice")
-            if self.COMM.rank == 0:
+            if self.COMM.rank == 0 and self.surface_mesh_file is not None:
+                self.mesh_surface_file_gmsh()
+            elif self.COMM.rank == 0:
                 # Cut at the bounding box so that the loaded faces are planar
                 axes = self.lattice.build_lattice_geometry_gmsh(cut_mesh_at_boundary=True, cell_index=cell_index,
                                                                 min_beam_length=self.min_beam_length)
@@ -156,6 +167,21 @@ class SolidModel:
             n_cells = self.domain.topology.index_map(3).size_global
             n_nodes = self.domain.geometry.index_map().size_global
             print(f"Solid mesh: {n_cells} tetrahedra, {n_nodes} nodes")
+
+    def mesh_surface_file_gmsh(self):
+        """
+        Mesh with tetrahedra the volume enclosed by the surface mesh file in the current GMSH model (the triangles of
+        the file are kept as the boundary mesh).
+        """
+        gmsh.merge(str(self.surface_mesh_file))
+        surfaces = [tag for _, tag in gmsh.model.getEntities(2)]
+        if not surfaces:
+            raise RuntimeError(f"No surface found in {self.surface_mesh_file}.")
+        loop = gmsh.model.geo.addSurfaceLoop(surfaces)
+        volume = gmsh.model.geo.addVolume([loop])
+        gmsh.model.geo.synchronize()
+        gmsh.model.addPhysicalGroup(3, [volume], tag=1)
+        gmsh.model.mesh.generate(3)
 
     def _box_bounds(self) -> tuple[np.ndarray, np.ndarray, float]:
         """Min and max corners of the lattice bounding box, and the tolerance used to find GMSH entities on it."""

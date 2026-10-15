@@ -810,15 +810,16 @@ class LatticeOpti(LatticeSim):
                     f"Mismatch in number of linear parameters: got {self.number_parameters}, expected {expected_n}."
                 )
 
-            # Rebuild current (denormalized) coefficients to detect clamping activity
-            coeffs = {"x": 0.0, "y": 0.0, "z": 0.0}
-            for i, dkey in enumerate(dirs):
-                coeffs[dkey] = self.denormalize_optimization_parameters(
-                    [float(self.actual_optimization_parameters[i])]
-                )[0]
+            # Same field as set_optimization_parameters: r = d + (max_radius - min_radius) * sum_k a_k * x_k / L_k,
+            # with d = min_radius + theta_d * (max_radius - min_radius). The gradient returned here is divided by
+            # (max_radius - min_radius), which is applied by _to_normalized_theta_space.
+            slopes = [float(self.actual_optimization_parameters[i]) for i in range(len(dirs))]
             d_intercept = self.denormalize_optimization_parameters(
                 [float(self.actual_optimization_parameters[-1])]
             )[0]
+            span = self.max_radius - self.min_radius
+            origin = {"x": self._x0, "y": self._y0, "z": self._z0}
+            length = {"x": self._Lx, "y": self._Ly, "z": self._Lz}
 
             tol = 1e-12  # small tolerance to decide if clamping is active
 
@@ -826,18 +827,16 @@ class LatticeOpti(LatticeSim):
                 # Sensitivity dJ/dr_cell = sum_j dJ/dr_j (one radius shared by all geometries)
                 dJ_dr_cell = sum(sens)
 
-                # Chain rule to linear parameters (ignore contribution if clamped)
-                cx, cy, cz = cell.center_point
-                r_unclamped = coeffs["x"] * cx + coeffs["y"] * cy + coeffs["z"] * cz + d_intercept
-                active = (self.min_radius + tol < r_unclamped < self.max_radius - tol)
-                if not active:
-                    # When the radius is clamped at a bound, ∂r/∂θ ≈ 0 (no push outside the box)
+                center = dict(zip("xyz", cell.center_point))
+                coords = [(center[dkey] - origin[dkey]) / max(length[dkey], 1e-16) for dkey in dirs]
+                r_unclamped = d_intercept + span * sum(a * c for a, c in zip(slopes, coords))
+                if not (self.min_radius + tol < r_unclamped < self.max_radius - tol):
+                    # When the radius is clamped at a bound, ∂r/∂θ = 0
                     continue
 
                 # Accumulate gradient for each coefficient in the order of 'dirs', then intercept
-                for i, dkey in enumerate(dirs):
-                    axis_val = cx if dkey == "x" else cy if dkey == "y" else cz
-                    grad[i] += dJ_dr_cell * axis_val
+                for i, c in enumerate(coords):
+                    grad[i] += dJ_dr_cell * c
                 grad[len(dirs)] += dJ_dr_cell  # intercept contribution
         else:
             raise NotImplementedError(f"Gradient for optimization type '{opt_type}' not implemented yet.")
@@ -1144,33 +1143,26 @@ class LatticeOpti(LatticeSim):
     @timing.timeit
     def _relative_density_gradient_kriging_cells(self) -> np.ndarray:
         """
-        Finite-difference gradient of the kriging relative density for every cell, with the same scheme as
-        Cell.get_relative_density_gradient_kriging, but with a single prediction call for all cells.
+        Exact gradient of the kriging relative density of every cell with respect to its radii, evaluated at the
+        current radii of the cell (all geometries together: the density of a hybrid cell is not additive).
 
         Returns
         -------
         np.ndarray
             Array (n_cells, n_radii) of the gradient of each cell with respect to its radii.
         """
-        epsilon = 1e-3
         geometries_types = self.kriging_model_geometries_types
-        inputs = []
-        for cell in self.cells:
+        X = np.zeros((len(self.cells), len(geometries_types)), dtype=float)
+        for i_cell, cell in enumerate(self.cells):
             for idx, rad in enumerate(cell.radii):
                 if cell.geom_types[idx] not in geometries_types:
                     print("geometry types in cell", cell.geom_types, " Not in the trained kriging model",
                           geometries_types)
                     raise ValueError("Incompatible geometry types between the cell and the kriging model.")
-                geom_index = geometries_types.index(cell.geom_types[idx])
-                perturbed_radii = np.zeros(len(geometries_types))
-                radii = np.zeros(len(geometries_types))
-                perturbed_radii[geom_index] = rad + epsilon
-                radii[geom_index] = rad
-                inputs.append(perturbed_radii)
-                inputs.append(radii)
-        prediction = np.ravel(self.kriging_model_relative_density.predict(np.array(inputs)))
-        grad = (prediction[0::2] - prediction[1::2]) / epsilon
-        return grad.reshape(len(self.cells), -1)
+                X[i_cell, geometries_types.index(cell.geom_types[idx])] = float(rad)
+        grad_full = np.atleast_2d(gp_mean_gradient_rbf_pipeline(self.kriging_model_relative_density, X))
+        return np.array([[grad_full[i_cell, geometries_types.index(g)] for g in cell.geom_types]
+                         for i_cell, cell in enumerate(self.cells)], dtype=float)
 
     @timing.category("optimization")
     @timing.timeit

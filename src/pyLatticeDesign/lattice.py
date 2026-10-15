@@ -888,18 +888,43 @@ class Lattice(object):
                     Lmax, best = L, (a, r)
             return best
 
-        # Compute angles using local node neighborhoods only
+        # Period of the lattice: a neighbour beam connected through the periodicity is joined at the periodic image of
+        # the node (e.g. a face-centered node and its image on the opposite face)
+        periodic = getattr(self, "enable_periodicity", False)
+        box = self.get_lattice_boundary_box()
+        period = np.array([box[1] - box[0], box[3] - box[2], box[5] - box[4]], dtype=float)
+        tol = 1e-9 * max(float(period.max()), 1.0)
+
+        def _coords(point) -> np.ndarray:
+            return np.array([point.x, point.y, point.z], dtype=float)
+
+        def _direction_from_node(beam, node: np.ndarray):
+            """Unit vector of the beam leaving the node (or its periodic image), None if not connected to it."""
+            for start, end in ((beam.point1, beam.point2), (beam.point2, beam.point1)):
+                gap = _coords(start) - node
+                if periodic:
+                    gap -= np.round(gap / np.where(period > 0, period, 1.0)) * period
+                if np.all(np.abs(gap) <= tol):
+                    u = _coords(end) - _coords(start)
+                    return u / np.linalg.norm(u)
+            return None
+
+        # Compute angles at each end of each beam, using the beams connected to this node only
         for b in self.beams:
             for p in (b.point1, b.point2):
+                node = _coords(p)
+                u = _direction_from_node(b, node)
                 a1_list, r1_list = [], []
                 for nb in p.connected_beams:
                     if nb is b: continue
-                    try:
-                        ang = b.get_angle_between_beams(nb, self.enable_periodicity)
-                    except ValueError:
+                    v = _direction_from_node(nb, node)
+                    if v is None:
                         continue
-                    if ang > 1e-12:
-                        a1_list.append(ang);
+                    ang = math.degrees(math.acos(max(min(float(u @ v), 1.0), -1.0)))
+                    # Skip the periodic copies of the beam itself (same direction): acos near 1 is inaccurate and
+                    # gives ~1e-6 deg instead of 0, i.e. a huge penalized zone
+                    if ang > 1e-3:
+                        a1_list.append(ang)
                         r1_list.append(nb.radius)
                 ang1, rad1 = _best_by_penalization(a1_list, r1_list)
                 b.set_angle(rad1, ang1, p, getattr(self, "penalization_strategy", "angle"))
@@ -2065,12 +2090,6 @@ class Lattice(object):
         except ImportError:
             raise ImportError("pymeshlab library is not installed. Please install it with: pip install pymeshlab")
 
-        try:
-            from pyLatticeDSO.src.pyLatticeDesign.lattice import Lattice
-        except ImportError:
-            raise ImportError("pyLatticeDSO library is not installed as submodule."
-                              "Please install it to use this feature. See documentation.")
-
         def numpy_to_manifold(vertices, faces):
             """
             Converts numpy arrays of vertices and faces into a manifold3d Manifold object.
@@ -2092,6 +2111,7 @@ class Lattice(object):
 
         project_root = Path(__file__).resolve().parents[2]
         path_out = str(project_root / "data" / "outputs" / "Pyrough" / name_stl_out)
+        Path(path_out).parent.mkdir(parents=True, exist_ok=True)
 
         path_file_rough_parameters = str(project_root / "data" / "inputs" / "preset_lattice"
                                          / "Pyrough" / name_file_rough_parameters)
