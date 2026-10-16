@@ -1,12 +1,41 @@
 """
 List of functions to transform the lattice structure in different ways.
 
-These functions can be used to modify the lattice geometry, such as attracting points, curving the lattice, 
+These functions can be used to modify the lattice geometry, such as attracting points, curving the lattice,
 applying cylindrical transformations, and fitting to surfaces.
 """
 import math
 from .point import Point
 from .timing import timing
+
+
+def _unique_nodes(lattice) -> list:
+    """
+    Nodes are shared between neighbouring beams and cells: collect each node object only once (by identity,
+    since Point.__hash__ depends on coordinates) so that it is not transformed several times.
+    """
+    unique = {}
+    for cell in lattice.cells:
+        for beam in cell.beams_cell:
+            unique.setdefault(id(beam.point1), beam.point1)
+            unique.setdefault(id(beam.point2), beam.point2)
+        for node in cell.points_cell:
+            unique.setdefault(id(node), node)
+    return list(unique.values())
+
+
+def _finalize_node_moves(lattice) -> None:
+    """
+    Update the lattice after its nodes moved: point hashes depend on coordinates, so the sets are rebuilt to keep
+    membership tests valid, and the cached beam lengths are recomputed.
+    """
+    for cell in lattice.cells:
+        cell.points_cell = set(list(cell.points_cell))
+        for beam in cell.beams_cell:
+            beam.length = beam.get_length()
+    lattice.nodes = set(list(lattice.nodes))
+    lattice.define_lattice_dimensions()
+
 
 @timing.category("design_transformation")
 @timing.timeit
@@ -56,15 +85,13 @@ def attractor_lattice(lattice, PointAttractorList: list[float] = None, alpha: fl
         point.move_to(pointMod[0], pointMod[1], pointMod[2])
 
     if PointAttractorList is None:
-        pointAttractor = Point(5, 0.5, -2)
+        pointAttractor = Point(5, 0.5, -2, [])
     else:
-        pointAttractor = Point(PointAttractorList[0], PointAttractorList[1], PointAttractorList[2])
+        pointAttractor = Point(PointAttractorList[0], PointAttractorList[1], PointAttractorList[2], [])
 
-    for cell in lattice.cells:
-        for beam in cell.beams_cell:
-            movePointAttracted(beam.point1, pointAttractor, alpha, inverse)
-            movePointAttracted(beam.point2, pointAttractor, alpha, inverse)
-    lattice.define_lattice_dimensions()
+    for node in _unique_nodes(lattice):
+        movePointAttracted(node, pointAttractor, alpha, inverse)
+    _finalize_node_moves(lattice)
 
 
 @timing.category("design_transformation")
@@ -89,17 +116,15 @@ def curveLattice(lattice, center_x: float, center_y: float, center_z: float,
         The strength of the curvature applied to the lattice.
         Positive values curve upwards, negative values curve downwards.
     """
-    for cell in lattice.cells:
-        for beam in cell.beams_cell:
-            for node in [beam.point1, beam.point2]:
-                x, y, z = node.x, node.y, node.z
-                # Calculate the distance from the center of curvature
-                dx = x - center_x
-                dy = y - center_y
-                dz = z - center_z
-                new_z = z - curvature_strength * (dx ** 2 + dy ** 2 + dz ** 2)
-                node.move_to(x, y, new_z)
-    lattice.define_lattice_dimensions()
+    for node in _unique_nodes(lattice):
+        x, y, z = node.x, node.y, node.z
+        # Calculate the distance from the center of curvature
+        dx = x - center_x
+        dy = y - center_y
+        dz = z - center_z
+        new_z = z - curvature_strength * (dx ** 2 + dy ** 2 + dz ** 2)
+        node.move_to(x, y, new_z)
+    _finalize_node_moves(lattice)
 
 @timing.category("design_transformation")
 @timing.timeit
@@ -118,11 +143,7 @@ def cylindrical_transform(lattice, radius: float, wall_thickness: bool = False) 
     x_min, y_min = lattice.x_min, lattice.y_min
     span_y = lattice.y_max - lattice.y_min
 
-    # Nodes are shared between neighbouring cells: collect each node object only once (by identity,
-    # since Point.__hash__ depends on coordinates) so that it is not transformed several times.
-    unique_nodes = {id(node): node for cell in lattice.cells for node in cell.points_cell}
-
-    for node in unique_nodes.values():
+    for node in _unique_nodes(lattice):
         x, y, z = node.x, node.y, node.z
         # Convert Cartesian coordinates (x, y, z) to cylindrical coordinates (r, theta, z)
         if wall_thickness:
@@ -132,11 +153,7 @@ def cylindrical_transform(lattice, radius: float, wall_thickness: bool = False) 
         theta = ((y - y_min) / span_y) * 2 * math.pi
         node.move_to(r * math.cos(theta), r * math.sin(theta), z)
 
-    # Point hashes depend on coordinates: rebuild the sets so membership tests stay valid
-    for cell in lattice.cells:
-        cell.points_cell = set(list(cell.points_cell))
-    lattice.nodes = set(list(lattice.nodes))
-    lattice.define_lattice_dimensions()
+    _finalize_node_moves(lattice)
 
 
 @timing.category("design_transformation")
@@ -165,12 +182,11 @@ def moveToCylinderForm(lattice, radius: float) -> None:
         """
         return radius - math.sqrt(radius ** 2 - (x_coords - lattice.x_max / 2) ** 2)
 
-    for cell in lattice.cells:
-        for node in cell.points_cell:
-            x, y, z = node.x, node.y, node.z
-            new_z = z - formula(x)
-            node.move_to(x, y, new_z)
-    lattice.define_lattice_dimensions()
+    for node in _unique_nodes(lattice):
+        x, y, z = node.x, node.y, node.z
+        new_z = z - formula(x)
+        node.move_to(x, y, new_z)
+    _finalize_node_moves(lattice)
 
 
 @timing.category("design_transformation")
@@ -195,24 +211,17 @@ def fitToSurface(lattice, equation: callable, mode: str = "z", params: dict = No
     """
     if params is None:
         params = {}
-    nodeAlreadyChanged = []
-    for cell in lattice.cells:
-        for node in cell.points_cell:
-            x, y, z = node.x, node.y, node.z
-            if node not in nodeAlreadyChanged:
-                nodeAlreadyChanged.append(node)
-                # Adjust for a surface \( z = f(x, y) \)
-                if mode == "z":
-                    new_z = equation(x, y, **params)
-                    new_z = z + new_z
-                    node.move_to(x, y, new_z)
-                elif mode == "z_plan":
-                    new_z = equation(x, y, **params)
-                    node.move_to(x, y, new_z)
+    # Other modes can be added here (e.g. cylindrical, spherical)
+    if mode not in ("z", "z_plan"):
+        raise ValueError(f"Mode '{mode}' non supporté.")
 
-                # Other modes can be added here (e.g. cylindrical, spherical)
-                else:
-                    raise ValueError(f"Mode '{mode}' non supporté.")
+    for node in _unique_nodes(lattice):
+        x, y, z = node.x, node.y, node.z
+        new_z = equation(x, y, **params)
+        if mode == "z":
+            # Adjust for a surface \( z = f(x, y) \)
+            new_z = z + new_z
+        node.move_to(x, y, new_z)
 
     # Update lattice limits after adjustment
-    lattice.define_lattice_dimensions()
+    _finalize_node_moves(lattice)

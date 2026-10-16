@@ -35,6 +35,7 @@ class Timing:
     def __getstate__(self):
         state = self.__dict__.copy()
         state['local'] = None
+        state['_name_cache'] = {}  # keys hold the undecorated functions, which cannot be pickled
         return state
 
     def __setstate__(self, state):

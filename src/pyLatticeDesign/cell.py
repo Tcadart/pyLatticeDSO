@@ -25,7 +25,8 @@ class Cell(object):
     def __init__(self, pos: list, initial_size: list, coordinate: list, geom_types: list[str],
                  radii: list[float], grad_radius: list or None, grad_dim: list or None, grad_mat: list or None,
                  uncertainty_node: float = 0.0, _verbose: int = 0,
-                 beams_already_defined: Optional[dict] = None, nodes_already_defined: Optional[dict] = None) -> None:
+                 beams_already_defined: Optional[dict] = None, nodes_already_defined: Optional[dict] = None,
+                 grad_pos: Optional[list] = None) -> None:
         """
         Initialize a Cell with its dimensions and position
 
@@ -66,6 +67,10 @@ class Cell(object):
 
         nodes_already_defined: set
             Set of nodes already defined in the lattice to avoid duplication. Defaults to None.
+
+        grad_pos: list, optional
+            Indices used to read the radius, dimension and material gradients. Defaults to pos. Differs from pos for
+            the cells created by symmetry, which take the gradients of the cell they mirror.
         """
 
         _validate_inputs_cell(pos, initial_size, coordinate, geom_types,
@@ -78,6 +83,7 @@ class Cell(object):
         self.beam_material = None
         self.size = None
         self.pos: list[int] = pos
+        self.grad_pos: list[int] = pos if grad_pos is None else grad_pos
         self.coordinate: list[float] = coordinate
         self.beams_cell: Optional[set] = set()  # Set of beams in the cell
         self.points_cell: Optional[set] = set()  # Set of points in the cell
@@ -381,6 +387,10 @@ class Cell(object):
             self.points_cell.add(p1)
             self.points_cell.add(p2)
 
+    def _gradient_index(self) -> list[int]:
+        """Indices of the cell in the gradients (pickles saved before grad_pos existed use pos)."""
+        return getattr(self, "grad_pos", None) or self.pos
+
     def get_beam_material(self) -> None:
         """
         Get the material of the beam based on the material gradient.
@@ -388,7 +398,8 @@ class Cell(object):
         if self.grad_mat is None:
             self.beam_material = 0
         else:
-            self.beam_material = self.grad_mat[self.pos[2]][self.pos[1]][self.pos[0]]
+            i, j, k = self._gradient_index()
+            self.beam_material = self.grad_mat[k][j][i]
 
     def get_radius(self, base_radius: float) -> float:
         """
@@ -407,9 +418,10 @@ class Cell(object):
         if self.grad_radius is None:
             return base_radius
         else:
-            beamRadius = (base_radius * self.grad_radius[self.pos[0]][0] *
-                          self.grad_radius[self.pos[1]][1] *
-                          self.grad_radius[self.pos[2]][2])
+            i, j, k = self._gradient_index()
+            beamRadius = (base_radius * self.grad_radius[i][0] *
+                          self.grad_radius[j][1] *
+                          self.grad_radius[k][2])
             return beamRadius
 
     def def_cell_size(self, initial_cell_size: list) -> None:
@@ -425,7 +437,7 @@ class Cell(object):
             self.size = initial_cell_size
         else:
             self.size = [initial_size * self.grad_dim[pos][i] for i, (initial_size, pos) in
-                         enumerate(zip(initial_cell_size, self.pos))]
+                         enumerate(zip(initial_cell_size, self._gradient_index()))]
 
     def def_cell_center(self) -> None:
         """

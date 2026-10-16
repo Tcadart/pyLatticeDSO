@@ -658,7 +658,6 @@ class LatticePlotting:
         if plotting:
             self._show()
 
-    @staticmethod
     def plot_radius_distribution(self, lattice_object: "Lattice", nb_radius_bins: int = 5):
         """
         Plot the radii distribution of beams in the lattice.

@@ -546,21 +546,25 @@ class Lattice(object):
 
             new_coord = [mcx, mcy, mcz]
 
-            # Build the mirrored cell
+            # Build the mirrored cell: it reads the gradients (radius, dimension, material) at the indices of the
+            # cell it mirrors; its position on the grid is defined below, once all the cells are known
             new_cell = Cell(
                 pos=list(cell.pos),
-                initial_size=list(cell.size),
+                initial_size=[self.cell_size_x, self.cell_size_y, self.cell_size_z],
                 coordinate=list(new_coord),
                 geom_types=list(cell.geom_types),
                 radii=list(cell.radii),
                 grad_radius=cell.grad_radius,
-                grad_dim=None,
+                grad_dim=cell.grad_dim,
                 grad_mat=cell.grad_mat,
                 uncertainty_node=getattr(cell, "uncertainty_node", 0.0),
                 _verbose=getattr(self, "_verbose", 0),
+                grad_pos=list(cell._gradient_index()),
             )
 
             new_cells.append(new_cell)
+            new_global_beams.extend(new_cell.beams_cell)
+            new_global_nodes.extend(new_cell.points_cell)
 
         # Append mirrored structures to lattice
         self.cells.extend(new_cells)
@@ -577,8 +581,35 @@ class Lattice(object):
             elif isinstance(self.nodes, list):
                 self.nodes.extend(new_global_nodes)
 
+        self._define_cell_positions_from_coordinates()
+
         # Recompute lattice dimensions/bounding box
         self.define_lattice_dimensions()
+
+    def _define_cell_positions_from_coordinates(self) -> None:
+        """
+        Set the grid position (pos) of every cell from the rank of its coordinate along each axis, and the number of
+        cells along each axis. Used after a symmetry, which extends the grid (possibly towards negative coordinates).
+        The gradient indices (grad_pos) of the cells are kept.
+        """
+        for cell in self.cells:
+            cell.grad_pos = list(cell._gradient_index())
+        counts = []
+        for axis in range(3):
+            values = sorted({round(float(cell.coordinate[axis]), 9) for cell in self.cells})
+            rank = {value: index for index, value in enumerate(values)}
+            for cell in self.cells:
+                cell.pos[axis] = rank[round(float(cell.coordinate[axis]), 9)]
+            counts.append(len(values))
+        self.num_cells_x, self.num_cells_y, self.num_cells_z = counts
+        self._define_size_from_cells()
+
+    def _define_size_from_cells(self) -> None:
+        """Size of the lattice along each direction from the extent of its cells."""
+        self.size_x, self.size_y, self.size_z = [
+            max(cell.coordinate[axis] + cell.size[axis] for cell in self.cells)
+            - min(cell.coordinate[axis] for cell in self.cells)
+            for axis in range(3)]
 
     @timing.category("design")
     @timing.timeit
@@ -620,6 +651,10 @@ class Lattice(object):
         """
         Computes the size of the lattice along each direction.
         """
+        if getattr(self, "symmetry_lattice", None) is not None:
+            # The grid was extended by the symmetry: the gradients only describe the original half
+            self._define_size_from_cells()
+            return
         size_lattice = [0.0, 0.0, 0.0]
         for direction in range(3):
             total_length = 0.0
@@ -736,22 +771,11 @@ class Lattice(object):
         """
         Neighbour assignment using integer grid indices + optional periodic wrap.
         """
-        # Build integer grid indices from positions
-        xmin, xmax, ymin, ymax, zmin, zmax = self.get_lattice_boundary_box()
-        inv_dx = 1.0 / self.cell_size_x
-        inv_dy = 1.0 / self.cell_size_y
-        inv_dz = 1.0 / self.cell_size_z
-
         def to_idx(p):
             """
-            Convert position to integer grid index.
+            Integer grid index of a cell (pos already holds the indices).
             """
-            # round to be robust to tiny float noise
-            return (
-                int(round((p[0] - xmin) * inv_dx)),
-                int(round((p[1] - ymin) * inv_dy)),
-                int(round((p[2] - zmin) * inv_dz)),
-            )
+            return int(p[0]), int(p[1]), int(p[2])
 
         idx_to_cell = {}
         for c in self.cells:

@@ -893,7 +893,11 @@ def gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
     import numpy as np
     from sklearn.pipeline import Pipeline
     from sklearn.gaussian_process import GaussianProcessRegressor
-    from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Product, WhiteKernel, Sum
+    from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Product, WhiteKernel, Sum, Matern
+
+    def is_rbf(kern) -> bool:
+        # Matern derives from RBF in scikit-learn but has a different derivative
+        return isinstance(kern, RBF) and not isinstance(kern, Matern)
 
     # --- Extract scaler (optional) and GPR ---
     scaler = None
@@ -934,9 +938,9 @@ def gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
             return None  # no cross-covariance contribution
         if isinstance(kern, Product):
             a, b = kern.k1, kern.k2
-            if isinstance(a, ConstantKernel) and isinstance(b, RBF):
+            if isinstance(a, ConstantKernel) and is_rbf(b):
                 return float(a.constant_value), b
-            if isinstance(b, ConstantKernel) and isinstance(a, RBF):
+            if isinstance(b, ConstantKernel) and is_rbf(a):
                 return float(b.constant_value), a
             if isinstance(a, ConstantKernel) and isinstance(b, Product):
                 sub = extract_const_rbf(b)
@@ -948,7 +952,7 @@ def gp_mean_gradient_rbf_pipeline(model, x_row: np.ndarray) -> np.ndarray:
                 if sub is not None:
                     c, r = sub
                     return float(b.constant_value) * c, r
-        if isinstance(kern, RBF):
+        if is_rbf(kern):
             return 1.0, kern
         return None
 

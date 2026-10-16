@@ -61,7 +61,6 @@ class Beam(object):
         else:
             self.cell_belongings: list['Cell'] = cell_belongings
         self.length: float = self.get_length()
-        self.volume: float = self.get_volume(section_type="circular")
 
         # Attributes for simulation
         self.index: Optional[int] = None
@@ -134,6 +133,11 @@ class Beam(object):
         x2, y2, z2 = self.point2.x, self.point2.y, self.point2.z
         length = round(math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2 + (z2 - z1) ** 2), 4)
         return length
+
+    @property
+    def volume(self) -> float:
+        """Volume of the beam (circular section), up to date with the current radius and length."""
+        return math.pi * (self.radius ** 2) * self.length
 
     @timing.category("design")
     @timing.timeit

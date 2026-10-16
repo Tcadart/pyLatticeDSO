@@ -934,6 +934,10 @@ class LatticeSim(Lattice):
         groups: dict = {}
         for cell in self.cells:
             geom_key = tuple(cell.geom_types) if isinstance(cell.geom_types, list) else cell.geom_types
+            if self.type_schur_complement_computation in ["exact", "FE2"]:
+                # Without periodicity, boundary cells differ from interior ones (penalized zones at the nodes):
+                # cells sharing the same radii can then have different exact Schur complements
+                geom_key = (geom_key, self._cell_topology_key(cell))
             radius_key = tuple(round(float(r), 8) for r in cell.radii)
             groups.setdefault(geom_key, {}).setdefault(radius_key, []).append(cell)
 
@@ -994,6 +998,20 @@ class LatticeSim(Lattice):
 
         if self._verbose > 1:
             print("Number of unique Schur complements computed:", nb_computed)
+
+    @staticmethod
+    def _cell_topology_key(cell: "Cell", ndigits: int = 9) -> tuple:
+        """
+        Hashable description of the beams of a cell in local coordinates (end points, radius, material, type).
+        Two cells with the same key have the same exact Schur complement.
+        """
+        def _local(p):
+            return (round(p.x - cell.coordinate[0], ndigits), round(p.y - cell.coordinate[1], ndigits),
+                    round(p.z - cell.coordinate[2], ndigits))
+
+        return tuple(sorted((tuple(sorted((_local(b.point1), _local(b.point2)))), round(float(b.radius), ndigits),
+                             int(b.material), int(b.type_beam))
+                            for b in cell.beams_cell if getattr(b, "radius", 0.0) > 0.0))
 
     def get_schur_complement_from_reduced_basis_batch(self, geometric_params_list: list[list[float]]) -> np.ndarray:
         """
@@ -1660,7 +1678,8 @@ class LatticeSim(Lattice):
             self.grad_radius, self.grad_dim, self.grad_mat,
             self.uncertainty_node, self._verbose,
             beams_already_defined=beams_already_defined,
-            nodes_already_defined=nodes_already_defined
+            nodes_already_defined=nodes_already_defined,
+            grad_pos=cell_to_reset._gradient_index()
         )
 
         # Update the cell in the lattice
