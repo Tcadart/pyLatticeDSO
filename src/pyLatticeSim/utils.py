@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib
-matplotlib.use('TkAgg')
 
 
 def clear_directory(directoryPath):

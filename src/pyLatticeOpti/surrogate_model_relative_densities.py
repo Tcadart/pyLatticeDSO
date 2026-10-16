@@ -22,10 +22,9 @@ try:
 except Exception:
     KDTree = None  # Allows importing this module during doc builds without SciPy binary compatibility.
 
-if not os.environ.get("DISPLAY") or os.environ.get("READTHEDOCS") or os.environ.get("PYLATTICE_DOCS"):
-    matplotlib.use("Agg")  # safe for CI/doc builds
-else:
-    matplotlib.use("TkAgg")
+if os.environ.get("READTHEDOCS") or os.environ.get("PYLATTICE_DOCS"):
+    matplotlib.use("Agg")  # doc builds
+# Otherwise the backend is chosen by Matplotlib (interactive when a display is available, Agg otherwise)
 
 def _import_sklearn_pipeline():
     try:

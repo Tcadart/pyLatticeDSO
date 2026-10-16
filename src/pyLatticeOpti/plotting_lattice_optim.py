@@ -8,8 +8,7 @@
 # =============================================================================
 
 import numpy as np
-import matplotlib
-matplotlib.use('TkAgg')
+# The backend is chosen by Matplotlib (interactive when a display is available, Agg otherwise)
 from matplotlib import pyplot as plt
 
 
