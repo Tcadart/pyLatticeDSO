@@ -20,9 +20,11 @@ dependencies:
   - libspatialindex=2.1.0
   - pyembree=0.1.6
   - joblib=1.6.0
+  - c-compiler  # required by the FFCx JIT (DOLFINx form compilation)
   - pip
   - pip:
       - matplotlib==3.11.2
+      - contourpy==1.3.3  # contourpy>=1.4 requires numpy>=2 and would replace the conda numpy
       - gmsh==4.15.2
       - sympy==1.14.0
       - colorama==0.4.6
