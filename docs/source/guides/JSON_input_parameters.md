@@ -66,6 +66,7 @@ These parameters extend the Lattice parameters with simulation-specific settings
 | `enable` | `simulation_parameters.enable` | bool | Enable simulation properties |
 | `material` | `simulation_parameters.material` | str | Material name (e.g., "VeroClear") (optional, default: "VeroClear") |
 | `periodicity` | `simulation_parameters.periodicity` | bool | Enable periodic boundary conditions (optional, default: false) |
+| `node_penalization` | `simulation_parameters.node_penalization` | bool | Stiffen the beams at nodes (optional, default: true; must be false for the [hybrid size optimization](hybrid_size_optimization.md)) |
 | `DDM.enable_preconditioner` | `simulation_parameters.DDM.enable_preconditioner` | bool | Enable preconditioner for DDM solver (optional) |
 | `DDM.preconditioner_type` | `simulation_parameters.DDM.preconditioner_type` | str | Type of preconditioner ("mean", "nearest_reference") (optional) |
 | `DDM.max_iterations` | `simulation_parameters.DDM.max_iterations` | int | Maximum iterations for DDM solver (optional, default: 1000) |
@@ -93,7 +94,7 @@ These parameters extend the LatticeSim parameters with optimization-specific set
 | `objective_type` | `optimization_informations.objective_type` | str | Type of objective function (e.g., "compliance") (required) |
 | `objective_data` | `optimization_informations.objective_data` | any | Additional objective data (optional) |
 | `max_iterations` | `optimization_informations.max_iterations` | int | Maximum optimization iterations (optional, default: 20) |
-| `optimization_parameters.type` | `optimization_informations.optimization_parameters.type` | str | Type of optimization parameters ("constant", "unit_cell", etc.) (required) |
+| `optimization_parameters.type` | `optimization_informations.optimization_parameters.type` | str | Type of optimization parameters ("constant", "unit_cell", "linear", "hybrid_size") (required, see [hybrid size optimization](hybrid_size_optimization.md)) |
 | `optimization_parameters.direction` | `optimization_informations.optimization_parameters.direction` | str | Optimization direction ("x", "y", "z") (optional) |
 | `optimization_parameters.hybrid` | `optimization_informations.optimization_parameters.hybrid` | bool | Enable hybrid optimization (required) |
 | `constraints.relative_density` | `optimization_informations.constraints.relative_density` | dict | Relative density constraint (optional) |

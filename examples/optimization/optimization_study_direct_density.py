@@ -2,6 +2,8 @@
 Direct verification of the relative density constraint of the designs of optimization_study_three_point_bending.py:
 the relative density of every cell is recomputed from the Gmsh CAD volume of a single cell with its optimized radii
 (same procedure as the training data of the kriging surrogate used in the constraint), then averaged on the lattice.
+Study folder: data/outputs/optimization_study/Three_point_bending by default, or `--input=optimization/<name>`; the
+other arguments are the cases to check (all the saved cases by default).
 """
 import json
 import sys
@@ -11,14 +13,18 @@ from pathlib import Path
 import numpy as np
 
 from pyLatticeDesign.lattice import Lattice
+from pyLatticeDesign.utils import open_lattice_parameters
 
-save_dir = Path(__file__).resolve().parents[2] / "data" / "outputs" / "optimization_study" / "Three_point_bending"
-cases = sys.argv[1:] or ["hybrid", "graded", "unit_cell"]
+name_file = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--input=")), "optimization/Three_point_bending")
+save_dir = Path(__file__).resolve().parents[2] / "data" / "outputs" / "optimization_study" / Path(name_file).name
+geom_types = open_lattice_parameters(name_file)["geometry"]["geom_types"]
+cases = [a for a in sys.argv[1:] if not a.startswith("--")] or [f"{name}{suffix}" for suffix in ("", "_FEM") for name in ("hybrid", "graded", "unit_cell")
+                         if (save_dir / f"{name}{suffix}.json").exists()]
 
-cell_file = Path(tempfile.mkdtemp()) / "cell_BCC_Hybrid1.json"
+cell_file = Path(tempfile.mkdtemp()) / ("cell_" + "_".join(geom_types) + ".json")
 cell_file.write_text(json.dumps({"geometry": {"cell_size": {"x": 1, "y": 1, "z": 1},
                                               "number_of_cells": {"x": 1, "y": 1, "z": 1},
-                                              "radii": [0.05, 0.05], "geom_types": ["BCC", "Hybrid1"]}}))
+                                              "radii": [0.05] * len(geom_types), "geom_types": geom_types}}))
 cell = Lattice(str(cell_file), verbose=-1)
 cache = {}
 

@@ -1,0 +1,55 @@
+{
+  "geometry": {
+    "cell_size": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      },
+    "number_of_cells": {
+      "x": 3,
+      "y": 2,
+      "z": 2
+    },
+    "radii": [0.05, 0.05, 0.05],
+    "geom_types": ["BCC", "Hybrid1", "Hybrid4"]
+  },
+  "simulation_parameters": {
+    "enable" : true,
+    "material": "VeroClear",
+    "periodicity": false,
+    "node_penalization": false
+  },
+  "boundary_conditions": {
+    "Displacement": {
+      "Fixed" : {
+        "Surface": ["Xmin"],
+        "DOF": ["X", "Y", "Z", "RX", "RY", "RZ"],
+        "Value": [0, 0, 0, 0, 0, 0]
+      }
+    },
+    "Force": {
+      "Load": {
+        "Surface": ["Xmax", "Zmax"],
+        "DOF": ["Z"],
+        "Value": [-0.1]
+      }
+    }
+  },
+  "optimization_informations": {
+    "objective_function": "min",
+    "objective_type": "compliance",
+    "max_iterations": 30,
+    "optimization_parameters": {
+      "type": "hybrid_size"
+    },
+    "constraints": {
+      "relative_density": {
+        "value": 0.2,
+        "compute_gradient": true
+      }
+    },
+    "enable_parameter_normalization": true,
+    "simulation_type": "FEM",
+    "enable_gradient_computing": true
+  }
+}

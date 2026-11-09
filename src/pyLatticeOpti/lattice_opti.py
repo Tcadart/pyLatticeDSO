@@ -101,6 +101,7 @@ class LatticeOpti(LatticeSim):
         self.plotting_densities = []
         self.plotting_objective = []
         self.plotter = None
+        self._fem_model = None  # FullScaleLatticeSimulation of the last FEM solve (used by the analytic gradient)
 
         self.relative_density_mode = "upper" # "upper" or "lower"
         self.relative_density_tolerance = 0.0
@@ -252,6 +253,10 @@ class LatticeOpti(LatticeSim):
 
         self.enable_normalization = optimization_informations.get("enable_parameter_normalization", False)
         self.enable_gradient_computing = optimization_informations.get("enable_gradient_computing", False)
+        if self.optimization_parameters.get("type") == "hybrid_size" and self._simulation_type != "FEM":
+            raise ValueError("'hybrid_size' optimization requires 'simulation_type': 'FEM'.")
+        if self._simulation_type == "FEM" and self.enable_gradient_computing:
+            self._check_FEM_gradient_inputs()
         if not self.enable_gradient_computing:
             print(Fore.YELLOW + "Warning: Gradient computing is disabled. Optimization may be slow." + Fore.RESET)
 
@@ -277,6 +282,22 @@ class LatticeOpti(LatticeSim):
         else:
             enable_domain_decomposition_solver = False
         return enable_domain_decomposition_solver
+
+    def _check_FEM_gradient_inputs(self) -> None:
+        """
+        Check that the inputs are compatible with the analytic gradient of the direct FEM solve of the full lattice:
+        compliance objective, stiffness depending on the radii through the beam sections only (no penalization at
+        nodes) and homogeneous Dirichlet conditions.
+        """
+        if self.objective_type != "compliance":
+            raise NotImplementedError("FEM analytic gradient is only implemented for the compliance.")
+        if getattr(self, "enable_node_penalization", True) or any(
+                beam.beam_mod for cell in self.cells for beam in cell.beams_cell):
+            raise ValueError("FEM analytic gradient requires 'node_penalization': false in 'simulation_parameters'.")
+        for name, bc in self.boundary_conditions.get("Displacement", {}).items():
+            if any(float(v) != 0.0 for v in bc.get("Value", [])):
+                raise NotImplementedError(f"FEM compliance gradient requires zero imposed displacements "
+                                          f"(boundary condition '{name}').")
 
     def _clamp_radius(self, v: float) -> float:
         return max(self.min_radius, min(self.max_radius, float(v)))
@@ -308,6 +329,9 @@ class LatticeOpti(LatticeSim):
         initial_value = mean(self.normalize_optimization_parameters(self.radii))
         if self.optimization_parameters["type"] == "unit_cell":
             self.initial_parameters = [initial_value] * self.number_parameters
+        elif self.optimization_parameters["type"] == "hybrid_size":
+            # Each base geometry starts from its own radius of the input file
+            self.initial_parameters = self.normalize_optimization_parameters(self.radii) * len(self.cells)
         elif self.optimization_parameters["type"] == "linear":
             if self.radius_field is None:
                 self._build_radius_field()
@@ -509,7 +533,7 @@ class LatticeOpti(LatticeSim):
                 )[0]
                 for cell in self.cells:
                     cell.change_beam_radius([radius] * len(self.geom_types))
-        elif self.optimization_parameters["type"] == "unit_cell":
+        elif self.optimization_parameters["type"] in ("unit_cell", "hybrid_size"):
             number_parameters_per_cell = len(self.geom_types)
             for cell in self.cells:
                 startIdx = cell.index * number_parameters_per_cell
@@ -570,7 +594,7 @@ class LatticeOpti(LatticeSim):
         """
         self._initialize_simulation_parameters()
         if self._simulation_type == "FEM":
-            solve_FEM_FenicsX(self)
+            _, self._fem_model = solve_FEM_FenicsX(self)
         elif self._simulation_type == "DDM":
             if not getattr(self, "_schur_is_current", False):
                 self._update_DDM_after_geometry_change()
@@ -737,7 +761,11 @@ class LatticeOpti(LatticeSim):
     @timing.timeit
     def calculate_gradient(self):
         """
-        Compute dJ/d(params) of J = calculate_objective() for the current DDM state.
+        Compute dJ/d(params) of J = calculate_objective() for the current simulation state.
+
+        FEM (direct solve of the full lattice): analytic compliance sensitivities, see _fem_cell_sensitivities.
+
+        DDM:
 
         With the condensed equilibrium S(r) u_f = b(r) on the free boundary DOFs, the sensitivity of the
         objective with respect to a radius r_j of a cell c is:
@@ -752,6 +780,22 @@ class LatticeOpti(LatticeSim):
         --------
         grad: np.ndarray
             Gradient vector in the physical parameter space
+        """
+        if self._simulation_type == "FEM":
+            cell_sensitivities = self._fem_cell_sensitivities()
+        else:
+            cell_sensitivities = self._ddm_cell_sensitivities()
+        return self._parameter_gradient_from_cell_sensitivities(cell_sensitivities)
+
+    def _ddm_cell_sensitivities(self) -> list[list[float]]:
+        """
+        Sensitivities of the objective with respect to the radius of each base geometry of each cell, from the last
+        DDM solve (see calculate_gradient).
+
+        Returns:
+        --------
+        cell_sensitivities: list of list of float
+            dJ/d(cell.radii[g]) for each cell (in the order of self.cells) and each base geometry g
         """
         if self.objective_type == "compliance":
             weight_vectors = None  # lambda = u for the compliance (self-adjoint problem)
@@ -776,13 +820,28 @@ class LatticeOpti(LatticeSim):
             if self._verbose >= 2 and weight_vectors is not None:
                 print(f"Cell {cell.index}: ||lambda_c||={np.linalg.norm(w_cell):.2e}, "
                       f"||u_c||={np.linalg.norm(u_cell):.2e}")
+        return cell_sensitivities
 
+    def _parameter_gradient_from_cell_sensitivities(self, cell_sensitivities) -> np.ndarray:
+        """
+        Chain rule from the sensitivities with respect to the cell radii to the optimization parameters.
+
+        Parameters:
+        -----------
+        cell_sensitivities: array-like (n_cells, n_geom)
+            dJ/d(cell.radii[g]) for each cell (in the order of self.cells) and each base geometry g
+
+        Returns:
+        --------
+        grad: np.ndarray
+            Gradient vector in the physical parameter space
+        """
         n_params = self.number_parameters
         grad = np.zeros(n_params, dtype=float)
         n_geom = len(self.geom_types)
         opt_type = self.optimization_parameters["type"]
 
-        if opt_type == "unit_cell":
+        if opt_type in ("unit_cell", "hybrid_size"):
             for cell, sens in zip(self.cells, cell_sensitivities):
                 for j_local, value in enumerate(sens):
                     grad[cell.index * n_geom + j_local] += value
@@ -841,6 +900,151 @@ class LatticeOpti(LatticeSim):
         else:
             raise NotImplementedError(f"Gradient for optimization type '{opt_type}' not implemented yet.")
         return grad
+
+    @timing.category("optimization")
+    @timing.timeit
+    def _fem_cell_sensitivities(self) -> np.ndarray:
+        """
+        Analytic sensitivities of the compliance with respect to the radius of each base geometry of each cell, from
+        the last direct FEM solve.
+
+        The beam stiffness is linear in the section properties (ES, GS ~ r^2 and EI, GJ ~ r^4), so the global
+        stiffness is exactly K(r) = sum_e (r_e^2 K2_e + r_e^4 K4_e) over the beam elements e. With loads independent
+        of r and zero imposed displacements, C = f^T u = u^T K u and:
+            dC/dr_e = - u^T (dK/dr_e) u = - 2 dW/dr_e (u fixed),    W = 1/2 u^T K u
+        dW/dr_e is assembled by UFL (derivative of the strain energy with respect to the DG0 radius field), then
+        summed over the elements of each (cell, base geometry).
+
+        Returns:
+        --------
+        sensitivities: np.ndarray
+            Array (n_cells, n_geom) of dC/d(cell.radii[g]), rows in the order of self.cells
+        """
+        import ufl
+        from dolfinx import fem
+
+        if self.objective_type != "compliance":
+            raise NotImplementedError("FEM analytic gradient is only implemented for the compliance.")
+        sim = self._fem_model
+        if sim is None or sim.u is None:
+            raise RuntimeError("No FEM solution available: simulate the lattice before computing the gradient.")
+        radius = sim.BeamModel.radius
+        V0 = radius.function_space
+
+        strain_energy = 0.5 * ufl.action(ufl.action(sim._k_form, sim.u), sim.u)
+        dW_dr = fem.assemble_vector(fem.form(ufl.derivative(strain_energy, radius, ufl.TestFunction(V0))))
+
+        row, col, dr_dparam = self._fem_dof_cell_geometry_map(sim.BeamModel)
+        sensitivities = np.zeros((len(self.cells), len(self.geom_types)), dtype=float)
+        np.add.at(sensitivities, (row, col), -2.0 * dW_dr.array[:row.size] * dr_dparam)
+        return sensitivities
+
+    def _fem_dof_cell_geometry_map(self, beam_model) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Find, for each DG0 dof of the FEM model (one per beam element), the cell (position in self.cells) and the base
+        geometry driving its radius, and the derivative of the element radius with respect to cell.radii[geometry].
+        The elements are matched to the beams with their midpoint (the mesh nodes lie on the beams). The mesh does not
+        depend on the radii: the map is computed once and reused while the element midpoints are unchanged.
+
+        Parameters:
+        -----------
+        beam_model: BeamModel
+            Beam model of the last FEM solve
+
+        Returns:
+        --------
+        row: np.ndarray
+            Cell position of each DG0 dof
+        col: np.ndarray
+            Base geometry index of each DG0 dof
+        dr_dparam: np.ndarray
+            d(element radius)/d(cell.radii[geometry]) of each DG0 dof
+        """
+        from scipy.spatial import cKDTree
+
+        domain = beam_model.domain
+        n_elem = domain.topology.index_map(domain.topology.dim).size_local
+        nodes = domain.geometry.x[domain.geometry.dofmap[:n_elem]]
+        midpoints = nodes.mean(axis=1)
+        cache = getattr(self, "_fem_dof_map_cache", None)
+        if cache is not None and cache[0].shape == midpoints.shape and np.allclose(cache[0], midpoints):
+            return cache[1]
+        dofs = beam_model.radius.function_space.dofmap.list[:n_elem, 0]
+
+        # A beam shared by several cells takes the radius of the last one (same order as set_optimization_parameters)
+        owner = {}
+        for i_cell, cell in enumerate(self.cells):
+            for beam in cell.beams_cell:
+                if beam.radius > 0:
+                    owner[beam] = (i_cell, beam.type_beam, cell.get_radius(1.0))
+        beams = list(owner)
+        p1 = np.array([beam.point1.coordinates for beam in beams], dtype=float)
+        d = np.array([beam.point2.coordinates for beam in beams], dtype=float) - p1
+
+        # Candidate beams of each element: beams of the closest points sampled along the beams (step of a quarter of
+        # the smallest element), then exact distance from the element midpoint to the candidate segments
+        step = 0.25 * np.min(np.linalg.norm(nodes[:, -1] - nodes[:, 0], axis=1))
+        n_samples = np.maximum(2, np.ceil(np.linalg.norm(d, axis=1) / step).astype(int) + 1)
+        sample_beam = np.repeat(np.arange(len(beams)), n_samples)
+        t_samples = np.concatenate([np.linspace(0.0, 1.0, n) for n in n_samples])
+        samples = p1[sample_beam] + t_samples[:, None] * d[sample_beam]
+        _, nearest = cKDTree(samples).query(midpoints, k=min(32, samples.shape[0]))
+        candidates = sample_beam[nearest]  # (n_elem, k)
+
+        w = midpoints[:, None, :] - p1[candidates]
+        dc = d[candidates]
+        t = np.clip(np.einsum("ijk,ijk->ij", w, dc) / np.einsum("ijk,ijk->ij", dc, dc), 0.0, 1.0)
+        dist = np.linalg.norm(w - t[..., None] * dc, axis=2)
+        best = np.argmin(dist, axis=1)
+        if np.max(dist[np.arange(n_elem), best]) > 1e-6 * max(self._Lx, self._Ly, self._Lz):
+            raise RuntimeError("Some beam elements of the FEM mesh could not be matched to a lattice beam.")
+        closest = candidates[np.arange(n_elem), best]
+
+        row = np.empty(n_elem, dtype=int)
+        col = np.empty(n_elem, dtype=int)
+        dr_dparam = np.empty(n_elem, dtype=float)
+        info = np.array([owner[beam] for beam in beams], dtype=float)[closest]
+        row[dofs], col[dofs], dr_dparam[dofs] = info[:, 0].astype(int), info[:, 1].astype(int), info[:, 2]
+        self._fem_dof_map_cache = (midpoints, (row, col, dr_dparam))
+        return row, col, dr_dparam
+
+    @timing.category("optimization")
+    @timing.timeit
+    def check_gradient(self, r: list[float] = None, eps: float = 1e-3) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Compare the analytic gradient with a central finite-difference gradient of the objective, in the optimizer
+        parameter space (normalized if enable_normalization=True).
+
+        Parameters:
+        -----------
+        r: list of float, optional
+            Optimization parameters where the gradients are compared (initial parameters by default)
+        eps: float
+            Finite-difference step
+
+        Returns:
+        --------
+        grad: np.ndarray
+            Analytic gradient
+        grad_fd: np.ndarray
+            Finite-difference gradient
+        """
+        if self.bounds is None or self.initial_parameters is None:
+            self._initialize_optimization_solver()
+        r = np.asarray(self.initial_parameters if r is None else r, dtype=float)
+
+        self.objective(r)  # fixes the normalization scale of the objective
+        grad = self.gradient(r)
+        grad_fd = self.finite_difference_gradient(r, eps=eps, scheme="central")
+
+        n_geom = len(self.geom_types)
+        print(f"{'param':>6} {'cell':>5} {'geometry':>10} {'analytic':>14} {'finite diff':>14} {'rel. error':>11}")
+        for i, (g, g_fd) in enumerate(zip(grad, grad_fd)):
+            rel_error = abs(g - g_fd) / max(abs(g_fd), 1e-12)
+            print(f"{i:>6} {i // n_geom:>5} {self.geom_types[i % n_geom]:>10} {g:>14.6e} {g_fd:>14.6e} "
+                  f"{rel_error:>11.2e}")
+        print(f"Global relative error: {np.linalg.norm(grad - grad_fd) / max(np.linalg.norm(grad_fd), 1e-12):.2e}")
+        return grad, grad_fd
 
     @timing.category("optimization")
     @timing.timeit
@@ -1070,7 +1274,7 @@ class LatticeOpti(LatticeSim):
         grad: list of float
             Gradient of relative density
         """
-        if self.optimization_parameters["type"] == "unit_cell":
+        if self.optimization_parameters["type"] in ("unit_cell", "hybrid_size"):
             n_cells = len(self.cells)
             n_geom = len(self.geom_types)
             grad = np.zeros(self.number_parameters, dtype=float)
@@ -1428,7 +1632,7 @@ class LatticeOpti(LatticeSim):
         """
         Set number of parameters for optimization
         """
-        if self.optimization_parameters["type"] == "unit_cell":
+        if self.optimization_parameters["type"] in ("unit_cell", "hybrid_size"):
             numParameters = 0
             for cell in self.cells:
                 numParameters += len(cell.radii)

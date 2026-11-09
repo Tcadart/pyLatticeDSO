@@ -37,6 +37,13 @@ __pycache__
 *.egg
 data/outputs/simulation_results/*
 !data/outputs/simulation_results/figure_homogenization/
+data/outputs/reduced_basis_convergence
+data/outputs/homogenization_comparaison
+data/outputs/optimization_study
+data/outputs/Pyrough
+data/outputs/roughness_same_density
+data/outputs/schur_complement/Schur_complement_mean_BCC_Hybrid1_Hybrid4.npz
+
 
 /data/outputs/schur_complement/Schur_complement_BCC_Hybrid1_Hybrid4.npz
 /data/outputs/saved_lattice_file

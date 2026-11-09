@@ -240,6 +240,8 @@ class LatticeSim(Lattice):
         if self.penalization_strategy not in PENALIZATION_STRATEGIES:
             raise ValueError(f"Unknown penalization strategy '{self.penalization_strategy}'. "
                              f"Use one of {list(PENALIZATION_STRATEGIES)}.")
+        # False: no stiffened beams at nodes (the stiffness then only depends on the radii through the sections)
+        self.enable_node_penalization = bool(sim_params.get("node_penalization", True))
         DDM_parameters = sim_params.get("DDM", None)
         if DDM_parameters is not None:
             self.enable_preconditioner = DDM_parameters.get("enable_preconditioner", False)
@@ -273,7 +275,10 @@ class LatticeSim(Lattice):
         """
         Set penalization on beams at nodes based on L_zone values defined at beam endpoints.
         This method allows for better simulation of beam junctions by introducing penalized segments.
+        Nothing is done if the node penalization is disabled ("node_penalization": false in the input file).
         """
+        if not getattr(self, "enable_node_penalization", True):
+            return
         n_capped = 0
         for cell in self.cells:
             beams_to_remove = []

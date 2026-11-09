@@ -63,6 +63,7 @@ nav:
       - Roughness module: guides/Pyrough_compatibility.md
       - Simulation: guides/simulation_methods.md
       - Optimization: guides/optimization_methods.md
+      - Hybrid size optimization: guides/hybrid_size_optimization.md
       - Reproducibility: guides/Reproducibility.md
 
   - Référence API:

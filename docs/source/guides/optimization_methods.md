@@ -107,3 +107,11 @@ with the JSON file defining the optimization parameters:
       "enable_gradient_computing": true
   }
 ```
+
+---
+
+## Direct FEM size optimization of hybrid lattices
+
+For lattices small enough to be solved directly, the `hybrid_size` parametrization optimizes one radius per base
+geometry and per cell with a direct FEM solve and an exact analytic gradient of the compliance. See the
+[hybrid size optimization guide](hybrid_size_optimization.md).
