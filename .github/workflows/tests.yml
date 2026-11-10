@@ -33,10 +33,20 @@ jobs:
 
   # Full tested environment (environment.yml): design and simulation verification tests
   full:
-    runs-on: ubuntu-latest
+    # Pinned: the FEniCSx/MPI tests crashed at startup after ubuntu-latest moved to Ubuntu 26
+    runs-on: ubuntu-24.04
     defaults:
       run:
         shell: bash -el {0}
+    env:
+      # OpenMPI on a single CI machine: no ssh launcher, no UCX/InfiniBand, allow oversubscription
+      OMPI_MCA_plm_ssh_agent: "false"
+      OMPI_MCA_pml: ob1
+      OMPI_MCA_osc: ^ucx
+      OMPI_MCA_btl: self,vader,tcp
+      OMPI_MCA_btl_base_warn_component_unused: "0"
+      OMPI_MCA_rmaps_base_oversubscribe: "true"
+      PRTE_MCA_rmaps_default_mapping_policy: ":oversubscribe"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,6 +62,11 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y libglu1-mesa libxcursor1 libxinerama1 libxft2
           pip install -e .
+
+      - name: Check MPI / DOLFINx
+        run: |
+          python -c "from mpi4py import MPI; print(MPI.Get_library_version()); print('rank', MPI.COMM_WORLD.rank)"
+          python -c "import dolfinx; print('dolfinx', dolfinx.__version__)"
 
       - name: Run tests
         run: pytest -v
